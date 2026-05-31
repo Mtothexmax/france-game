@@ -99,6 +99,25 @@ def main():
                 with open(out_path, 'w', encoding='utf-8') as wf:
                     json.dump(merged, wf, indent=2)
                 print('Wrote embedded tileset JSON to', out_path)
+            # Also produce a copy of the TMJ with the tileset embedded so Phaser can load it directly
+            try:
+                with open(tmj_path, 'r', encoding='utf-8') as fm:
+                    tmj_text = fm.read()
+                # build embedded tileset text
+                embedded_tileset = json.dumps(merged, indent=2)
+                # replace the first "tilesets": [ ... ] block with the embedded one
+                import re
+                new_tilesets_block = '"tilesets": [\n' + embedded_tileset + '\n]'
+                tmj_new = re.sub(r'"tilesets"\s*:\s*\[.*?\]', new_tilesets_block, tmj_text, flags=re.S)
+                embedded_tmj_path = os.path.join(os.path.dirname(out_path), 'map1_embedded.tmj')
+                if os.path.exists(embedded_tmj_path) and not args.overwrite:
+                    print('Embedded TMJ exists and --overwrite not set, skipping:', embedded_tmj_path)
+                else:
+                    with open(embedded_tmj_path, 'w', encoding='utf-8') as fe:
+                        fe.write(tmj_new)
+                    print('Wrote embedded TMJ to', embedded_tmj_path)
+            except Exception as e:
+                print('Failed to produce embedded TMJ:', e)
         else:
             print('No external tileset reference found in', tmj_path, 'or tileset file missing. Skipping embed step.')
 

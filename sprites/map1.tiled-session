@@ -1,0 +1,42 @@
+{
+    "Map/SizeTest": {
+        "height": 4300,
+        "width": 2
+    },
+    "activeFile": "map1.tmj",
+    "expandedProjectPaths": [
+        "."
+    ],
+    "fileStates": {
+        "map1.tmj": {
+            "scale": 0.25,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 538,
+                "y": 306
+            }
+        },
+        "tileset.tsj": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tileset.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        }
+    },
+    "last.imagePath": "C:/dev/france-game/sprites",
+    "map.fixedSize": false,
+    "map.lastUsedFormat": "json",
+    "openFiles": [
+        "tileset.tsj",
+        "map1.tmj"
+    ],
+    "project": "map1.tiled-project",
+    "recentFiles": [
+        "tileset.tsj",
+        "map1.tmj",
+        "tileset.tsx"
+    ],
+    "tileset.lastUsedFormat": "json"
+}

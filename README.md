@@ -1,36 +1,34 @@
 Phaser Jump'n'Run — France Game
 
-Quick start
+Purpose
 
-1. Serve the project folder over HTTP (browsers block local file XHR). From the project root run one of:
+This repository contains a minimal Phaser 3 platformer that loads a Tiled map (`sprites/map1.tmj`) and a tileset image (`sprites/tileset.png`). The playable character is composed from the images and rectangle annotations inside `sprites/character/`.
+
+Important behavior requirements
+
+- The player collides with tiles on the Tiled layer named `Walk on` (solid ground).
+- The player can both walk on and jump through tiles on the Tiled layer named `Walk on and jump through` (one-way platforms).
+- Do NOT modify the `.tmj` file programmatically — Tiled requires the original format to remain valid. A helper script is provided to create character annotation files without touching the map.
+- No on-screen control hints are displayed in-game.
+
+Annotation helper
+
+Use `tools/generate_annotations.py` to produce simple rectangular annotations for a spritesheet. It slices an image into a regular grid and writes a JSON array of objects with `name,x,y,width,height`.
+
+Example:
 
 ```powershell
-# Python 3
-python -m http.server 8000
-
-# or using PowerShell's simple listener
-# if you have live-server extension in VS Code, open index.html with it
+python tools/generate_annotations.py --input sprites/character/walking.png --frame-width 120 --frame-height 280 --out sprites/character/walking_auto_annotation.json
 ```
 
-2. Open http://localhost:8000 in your browser.
+Requirements
 
-Assets
-- Map: sprites/map1.tmj (Tiled JSON). The map may be exported as infinite; the game uses the map's pixel size to set world bounds.
-- Tileset image: sprites/tileset.png
-- Character images: sprites/character/walking.png, sprites/character/shooting.png
-- Character annotations (rectangles): sprites/character/walking_anotation.json, sprites/character/shooting_annotation.json
+- Python with Pillow (`pip install Pillow`) to run the annotation helper.
 
-Controls
-- Move: Arrow keys or A / D
-- Jump: Up or W or Space
+Files
 
-Notes
-- The code auto-generates texture frames from the annotation JSON files by cropping the source images at runtime. If you extend the Tiled map file (export new chunks), the map's pixel dimensions are read at load-time and used for world bounds.
-- For development you may want to enable `debug: true` in `js/game.js` under `physics.arcade`.
+- `index.html` — game entry
+- `js/game.js` — Phaser scene and game logic
+- `tools/generate_annotations.py` — helper to create annotation JSON files (does not modify map files)
 
-Files added
-- index.html — game entry
-- js/game.js — Phaser game
-- README.md — this file
-
-If you want me to add enemies, collectibles, or polish animations, tell me which behavior you'd like next.
+If you want enemies, collectibles, or improved animation blending, specify what behavior to add next.

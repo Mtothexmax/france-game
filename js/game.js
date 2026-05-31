@@ -4,6 +4,8 @@ class MainScene extends Phaser.Scene {
   preload() {
     // map & tiles
     this.load.tilemapTiledJSON('map1', 'sprites/map1.tmj');
+    // load the external tileset JSON so we can merge it at runtime (does NOT modify files)
+    this.load.json('tileset_tsj', 'sprites/tileset.tsj');
     this.load.image('tiles', 'sprites/tileset.png');
 
     // character images and annotations
@@ -14,6 +16,19 @@ class MainScene extends Phaser.Scene {
   }
 
   create() {
+    // If the Tiled map references an external tileset, merge it into the cached map JSON
+    const rawMap = this.cache.json.get('map1');
+    if (rawMap && rawMap.tilesets && rawMap.tilesets.length) {
+      const t0 = rawMap.tilesets[0];
+      if (t0 && t0.source) {
+        const tsj = this.cache.json.get('tileset_tsj');
+        if (tsj) {
+          // keep firstgid and replace the tileset entry with the loaded tsj contents
+          rawMap.tilesets[0] = Object.assign({ firstgid: t0.firstgid, source: t0.source }, tsj);
+        }
+      }
+    }
+
     const map = this.make.tilemap({ key: 'map1' });
     const tileset = map.addTilesetImage('tileset', 'tiles');
 
@@ -23,7 +38,7 @@ class MainScene extends Phaser.Scene {
 
     // set collisions on all non-empty tiles
     if (walkLayer) {
-      walkLayer.setCollisionByExclusion([0]);
+        walkLayer.setCollisionByExclusion([0]);
     }
 
     // world bounds from map
@@ -56,8 +71,24 @@ class MainScene extends Phaser.Scene {
       this.anims.create({ key: 'shoot', frames: shootFrames.map(k => ({ key: k })), frameRate: 6, repeat: 0 });
     }
 
-    // collisions
-    if (walkLayer) this.physics.add.collider(this.player, walkLayer);
+      // collisions
+      if (walkLayer) this.physics.add.collider(this.player, walkLayer);
+
+      // 'Walk on and jump through' layer: one-way platforms (player can jump up through, land when falling)
+      if (map.getLayer('Walk on and jump through')) {
+        const jumpLayer = map.createLayer('Walk on and jump through', tileset, 0, 0);
+        jumpLayer.setCollisionByExclusion([0]);
+        // processCallback: only collide when player is falling and above the tile
+        const processCallback = (player, tile) => {
+          if (!player.body) return false;
+          const vy = player.body.velocity.y;
+          const playerBottom = player.body.y + player.body.height;
+          const tileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+          // collide only when moving downward and player's bottom is above the tile top (with small tolerance)
+          return vy >= 0 && (playerBottom <= (tileTop + 8));
+        };
+        this.physics.add.collider(this.player, jumpLayer, null, processCallback, this);
+      }
 
     // camera
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
@@ -67,8 +98,7 @@ class MainScene extends Phaser.Scene {
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys({ W: 'W', A: 'A', S: 'S', D: 'D', SPACE: 'SPACE' });
 
-    // simple HUD
-    this.add.text(10, 10, 'Move: WASD / Arrows   Jump: W / Up / Space', { font: '16px sans-serif', fill: '#fff' }).setScrollFactor(0);
+      // (HUD removed per request)
 
     // physics tuning
     this.player.setBounce(0.05);

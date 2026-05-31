@@ -8,6 +8,9 @@
         "."
     ],
     "fileStates": {
+        "": {
+            "scaleInDock": 1
+        },
         "map1.tmj": {
             "scale": 0.25,
             "selectedLayer": 1,

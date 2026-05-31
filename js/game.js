@@ -2,36 +2,31 @@ class MainScene extends Phaser.Scene {
   constructor() { super('MainScene'); }
 
   preload() {
-    // tiles and tileset metadata (we'll fetch the TMJ ourselves to avoid Phaser parsing external tilesets)
-    // try to preload an embedded TMJ (non-destructive copy); if it exists Phaser will handle it
-    this.load.tilemapTiledJSON('map1', 'sprites/map1_embedded.tmj');
     this.load.json('tileset_tsj', 'sprites/tileset.tsj');
     this.load.image('tiles', 'sprites/tileset.png');
 
-    // character images and annotations
-    this.load.image('walking_img', 'sprites/character/walking.png');
-    this.load.image('shooting_img', 'sprites/character/shooting.png');
-    this.load.json('walking_annot', 'sprites/character/walking_anotation.json');
-    this.load.json('shooting_annot', 'sprites/character/shooting_annotation.json');
+    // character spritesheet and annotation
+    this.load.image('character_img', 'sprites/character/character.png');
+    this.load.json('character_annot', 'sprites/character/character_annotation.json');
+
+    // enemy spritesheet and annotation
+    this.load.image('alienbot_img', 'sprites/enemy/alienbot.png');
+    this.load.json('alienbot_annot', 'sprites/enemy/alienbot_annotation.json');
+
+    // music
+    this.load.audio('bgm', 'music/Rooftop Dash Paris.mp3');
+
+    // sound effects
+    this.load.audio('sfx_jump', 'sounds/jump.mp3');
+    this.load.audio('sfx_shot', 'sounds/shot.mp3');
+    this.load.audio('sfx_enemy_destroyed', 'sounds/enemy destroyed.ogg');
+
+    // HUD
+    this.load.image('hud_img', 'sprites/hud/hud.png');
+    this.load.json('hud_annot', 'sprites/hud/hud_annotations.json');
   }
 
   create() {
-    // If Phaser already has a preloaded embedded map, use it directly.
-    if (this.cache.tilemap && this.cache.tilemap.get('map1')) {
-      console.log('cached tilemap entry pre-make:', this.cache.tilemap.get('map1'));
-      try {
-        const map = this.make.tilemap({ key: 'map1' });
-        const tileset = map.addTilesetImage('tileset', 'tiles');
-        setupMapAndPlayer.call(this, map, tileset);
-        return;
-      } catch (e) {
-        console.error('make.tilemap failed:', e);
-        console.log('cached tilemap raw data keys:', Object.keys(this.cache.tilemap.get('map1') || {}));
-        console.log('first tileset in cached data:', (this.cache.tilemap.get('map1') || {}).data && ((this.cache.tilemap.get('map1') || {}).data.tilesets || [])[0]);
-      }
-    }
-
-    // Load the map JSON ourselves so Phaser doesn't parse external tileset references.
     (async () => {
       let mapData = null;
       // prefer embedded TMJ if present
@@ -75,123 +70,120 @@ class MainScene extends Phaser.Scene {
         }
       }
 
-      if (this.cache.tilemap && typeof this.cache.tilemap.add === 'function') {
-        try {
-          // Ensure Phaser recognizes this as TILED_JSON format
-          const tiledFormat = (Phaser && Phaser.Tilemaps && Phaser.Tilemaps.Formats && Phaser.Tilemaps.Formats.TILED_JSON) || 0;
-          console.log('Phaser.Tilemaps.Formats =', Phaser.Tilemaps && Phaser.Tilemaps.Formats);
-          console.log('chosen tiledFormat =', tiledFormat);
-            const entry = { data: mapToUse, format: tiledFormat };
-          // remove any existing entry then add
-          try { this.cache.tilemap.remove('map1'); } catch (e) {}
-          this.cache.tilemap.add('map1', entry);
-          console.log('tilemap cache entry:', this.cache.tilemap.get('map1'));
-          console.log('used tilemap format constant:', entry.format);
-          try {
-            const d = entry.data;
-            console.log('mapToUse width/height:', d.width, d.height, 'layers:', d.layers && d.layers.length);
-            if (d.layers && Array.isArray(d.layers)) {
-              d.layers.forEach((ly, idx) => {
-                console.log(`layer[${idx}] name=${ly.name} type=${ly.type} dataLen=${(ly.data && ly.data.length) || 0}`);
-                if (ly.data && ly.data.length) console.log('layer sample:', ly.data.slice(0, 16));
-              });
+      // manual layer creation (bypasses Phaser's native tilemap which doesn't handle
+      // two tilesets sharing the same image in infinite maps)
+      const created = {};
+      const mapWidth = mapToUse.width;
+      const mapHeight = mapToUse.height;
+      const tw = mapToUse.tilewidth || 32;
+      const th = mapToUse.tileheight || 32;
+      const tilesetMeta = (mapToUse.tilesets && mapToUse.tilesets[0]) || {};
+      const tilesetName = tilesetMeta.name || 'tileset';
+      const margin = typeof tilesetMeta.margin === 'number' ? tilesetMeta.margin : 0;
+      const spacing = typeof tilesetMeta.spacing === 'number' ? tilesetMeta.spacing : 0;
+
+      // Build sorted tileset list (descending by firstgid) for GID lookup
+      const tsList = (mapToUse.tilesets || []).slice().sort((a, b) => b.firstgid - a.firstgid);
+
+      // Scan ALL layers for a tile whose GID maps to character_spawn_point local ID (1089)
+      let spawnPos = null;
+      const spawnTileLocalId = 1089;
+      console.log('Spawn scan: map size', mapWidth, 'x', mapHeight, 'tilesets:', (mapToUse.tilesets || []).map(t => ({ firstgid: t.firstgid, name: t.name })));
+      if (mapToUse && mapToUse.layers) {
+        for (const lyr of mapToUse.layers) {
+          if (!lyr.data) { console.log('Skipping layer', lyr.name, '(no data)'); continue; }
+          console.log('Scanning layer', lyr.name, 'dataLen:', lyr.data.length, 'sample:', lyr.data.slice(0, 16));
+          for (let i = 0; i < lyr.data.length; i++) {
+            const gid = lyr.data[i];
+            if (gid > 0) {
+              let localId = -1;
+              for (const ts of tsList) {
+                if (gid >= ts.firstgid) { localId = gid - ts.firstgid; break; }
+              }
+              if (localId === spawnTileLocalId) {
+                const col = i % mapWidth;
+                const row = Math.floor(i / mapWidth);
+                spawnPos = { x: col * tw + tw / 2, y: row * th };
+                console.log('Found spawn point in layer', lyr.name, 'col', col, 'row', row, 'gid', gid, 'localId', localId, 'spawnPos', spawnPos);
+                break;
+              }
             }
-            console.log('tilesets:', d.tilesets && d.tilesets.length, d.tilesets && d.tilesets[0]);
-          } catch (e) { console.warn('post-add inspect failed', e); }
-          } catch (e) {
-            console.warn('Failed to add tilemap to cache.tilemap, falling back to manual layer creation', e);
-            // fall through to manual creation below
           }
-      } else {
-        // manual creation will be used below
+          if (spawnPos) break;
+        }
+        if (!spawnPos) console.log('No character_spawn_point tile (id=1089) found in any layer');
       }
-      // debug: report which map source was used
-      if (mapData && mapData.tilesets && mapData.tilesets[0] && mapData.tilesets[0].image) {
-        console.log('Map loaded; tileset image:', mapData.tilesets[0].image || '<n/a>');
-      } else {
-        console.log('Map loaded (no tileset image found)');
-      }
-
-      console.log('mapData keys:', Object.keys(mapData || {}));
-      console.log('map layers:', mapData && mapData.layers ? mapData.layers.map(l => l.name) : null);
-      console.log('map infinite:', mapData && mapData.infinite);
-      // If Phaser's make.tilemap failed earlier for the embedded/external TMJ,
-      // create layers manually from the converted finite map and provide a
-      // lightweight fake map object for setupMapAndPlayer.
-      let finalMap = null;
-      let finalTileset = null;
-      try {
-        finalMap = this.make.tilemap({ key: 'map1' });
-        finalTileset = finalMap.addTilesetImage('tileset', 'tiles');
-      } catch (e) {
-        // manual layer creation
-        const created = {};
-        const mapWidth = mapToUse.width;
-        const mapHeight = mapToUse.height;
-        const tw = mapToUse.tilewidth || 32;
-        const th = mapToUse.tileheight || 32;
-        const tilesetName = (mapToUse.tilesets && mapToUse.tilesets[0] && mapToUse.tilesets[0].name) || 'tileset';
-
-        const createLayerFromName = (name, x=0, y=0) => {
-          const layerObj = (mapToUse.layers || []).find(l => l.name === name);
-          if (!layerObj || !layerObj.data) return null;
-          const firstgid = (mapToUse.tilesets && mapToUse.tilesets[0] && mapToUse.tilesets[0].firstgid) || 1;
-          const arr2d = [];
-          for (let row = 0; row < mapHeight; row++) {
-            const rowArr = [];
-            const slice = layerObj.data.slice(row * mapWidth, (row + 1) * mapWidth);
-            for (let i = 0; i < slice.length; i++) {
-              const gid = slice[i] || 0;
-              // Convert Tiled GID to Phaser ARRAY_2D format:
-              // Phaser expects tile indexes zero-based and -1 for empty tiles
-              // Tiled GIDs start at firstgid; so subtract firstgid to get zero-based index
-              rowArr[i] = (gid === 0) ? -1 : (gid - firstgid);
-            }
-            arr2d[row] = rowArr;
+      // Also dump all unique local IDs from the Character spawn point layer if it exists
+      const spawnLayerDump = (mapToUse.layers || []).find(l => l.name === 'Character spawn point' || l.name === 'character spawn point');
+      if (spawnLayerDump && spawnLayerDump.data) {
+        const uniqueLocalIds = new Set();
+        for (const gid of spawnLayerDump.data) {
+          if (gid > 0) {
+            let localId = -1;
+            for (const ts of tsList) { if (gid >= ts.firstgid) { localId = gid - ts.firstgid; break; } }
+            uniqueLocalIds.add(localId);
           }
-          console.log('createLayerFromName', name, 'mapWidth', mapWidth, 'mapHeight', mapHeight);
-          console.log('first row length:', arr2d[0].length, 'first row sample (32):', arr2d[0].slice(0,32));
-          // check column variation by sampling first 8 columns across rows
-          const colSamples = [];
-          for (let c = 0; c < Math.min(8, arr2d[0].length); c++) {
-            const colVals = [];
-            for (let r = 0; r < Math.min(8, arr2d.length); r++) colVals.push(arr2d[r][c]);
-            colSamples.push(colVals);
-          }
-          console.log('colSamples first 8 cols x 8 rows:', colSamples);
-          const tmpMap = this.make.tilemap({ data: arr2d, tileWidth: tw, tileHeight: th });
-          console.log('tmpMap props:', tmpMap.width, tmpMap.height, tmpMap.tileWidth, tmpMap.tileHeight);
-          const ts = tmpMap.addTilesetImage(tilesetName, 'tiles');
-          const layer = tmpMap.createLayer(0, ts, x, y);
-          console.log('created layer', name, 'layer size:', layer.layer.width, layer.layer.height);
-          // sample tile indices from the created layer
-          const tileSamples = [];
-          for (let r = 0; r < Math.min(4, layer.layer.height); r++) {
-            const rowVals = [];
-            for (let c = 0; c < Math.min(8, layer.layer.width); c++) {
-              const t = layer.layer.data[r][c];
-              rowVals.push(t ? t.index : 0);
-            }
-            tileSamples.push(rowVals);
-          }
-          console.log('tileSamples:', tileSamples);
-          created[name] = { tmpMap, layer };
-          return layer;
-        };
-
-        const fakeMap = {
-          createLayer: (name, tileset, x, y) => createLayerFromName(name, x, y),
-          getLayer: (name) => created[name] ? { tilemapLayer: created[name].layer } : null,
-          widthInPixels: (mapToUse.width || 0) * (mapToUse.tilewidth || 32),
-          heightInPixels: (mapToUse.height || 0) * (mapToUse.tileheight || 32),
-        };
-
-        setupMapAndPlayer.call(this, fakeMap, null);
-        return;
+        }
+        console.log('Unique local IDs in Character spawn point layer:', [...uniqueLocalIds]);
       }
 
-      // proceed to create layers and the rest of the scene
-      setupMapAndPlayer.call(this, finalMap, finalTileset);
+      const createLayerFromName = (name, x=0, y=0) => {
+        const layerObj = (mapToUse.layers || []).find(l => l.name === name);
+        if (!layerObj || !layerObj.data) return null;
+        const arr2d = [];
+        for (let row = 0; row < mapHeight; row++) {
+          const rowArr = [];
+          const slice = layerObj.data.slice(row * mapWidth, (row + 1) * mapWidth);
+          for (let i = 0; i < slice.length; i++) {
+            const gid = slice[i] || 0;
+            if (gid === 0) {
+              rowArr[i] = -1;
+            } else {
+              let localId = -1;
+              for (const ts of tsList) {
+                if (gid >= ts.firstgid) {
+                  localId = gid - ts.firstgid;
+                  break;
+                }
+              }
+              rowArr[i] = localId;
+            }
+          }
+          arr2d[row] = rowArr;
+        }
+        console.log('createLayerFromName', name, 'mapWidth', mapWidth, 'mapHeight', mapHeight);
+        const tmpMap = this.make.tilemap({ data: arr2d, tileWidth: tw, tileHeight: th });
+        const ts = tmpMap.addTilesetImage(tilesetName, 'tiles', tw, th, margin, spacing);
+        const layer = tmpMap.createLayer(0, ts, x, y);
+        // Apply parallax from Tiled layer data
+        if (layerObj.parallaxx !== undefined || layerObj.parallaxy !== undefined) {
+          layer.setScrollFactor(
+            layerObj.parallaxx !== undefined ? layerObj.parallaxx : 1,
+            layerObj.parallaxy !== undefined ? layerObj.parallaxy : 1
+          );
+        }
+        console.log('created layer', name, 'layer size:', layer.layer.width, layer.layer.height);
+        created[name] = { tmpMap, layer };
+        return layer;
+      };
+
+      const fakeMap = {
+        createLayer: (name, tileset, x, y) => createLayerFromName(name, x, y),
+        getLayer: (name) => created[name] ? { tilemapLayer: created[name].layer } : null,
+        widthInPixels: (mapToUse.width || 0) * (mapToUse.tilewidth || 32),
+        heightInPixels: (mapToUse.height || 0) * (mapToUse.tileheight || 32),
+        mapData: mapToUse,
+        layerNames: (mapToUse.layers || []).map(l => l.name),
+        firstgid: 0,
+        spawnPos: spawnPos,
+      };
+
+      setupMapAndPlayer.call(this, fakeMap, null);
+
+      // play background music
+      if (this.cache.audio.exists('bgm')) {
+        this.sound.play('bgm', { loop: true, volume: 0.5 });
+      }
     })();
     // end async IIFE
     return;
@@ -201,6 +193,10 @@ class MainScene extends Phaser.Scene {
 
   update() {
     if (!this.player || !this.cursors || !this.keys) return;
+    this._onSlope = false;
+
+    const speedMult = (this.keys.SHIFT && this.keys.SHIFT.isDown) ? 1.6 : 1;
+    const currentSpeed = this.speed * speedMult;
 
     const left = this.cursors.left.isDown || this.keys.A.isDown;
     const right = this.cursors.right.isDown || this.keys.D.isDown;
@@ -208,25 +204,217 @@ class MainScene extends Phaser.Scene {
       || (this.keys && this.keys.W && Phaser.Input.Keyboard.JustDown(this.keys.W))
       || (this.keys && this.keys.SPACE && Phaser.Input.Keyboard.JustDown(this.keys.SPACE));
 
-    if (left) {
-      this.player.setVelocityX(-this.speed);
-      this.player.flipX = true;
-      if (this.player.body.onFloor() && this.anims.exists('walk')) this.player.play('walk', true);
-    } else if (right) {
-      this.player.setVelocityX(this.speed);
-      this.player.flipX = false;
-      if (this.player.body.onFloor() && this.anims.exists('walk')) this.player.play('walk', true);
-    } else {
-      // idle
-      this.player.setVelocityX(0);
-      const idleKey = this.textures.getTextureKeys().find(k => k === 'walking_0' || k === 'walking_idle');
-      if (idleKey) this.player.setTexture(idleKey);
+    this.applySlopeAdjustment();
+
+    // Register once per scene: after physics, snap body to ground if close
+    if (!this._postRegistered) {
+      this._postRegistered = true;
+      this.events.on('postupdate', () => {
+        if (!this.player || !this.player.body || this._onSlope) return;
+        const body = this.player.body;
+        const bBot = body.y + body.height;
+        const groundTileTop = Math.floor(bBot / 32) * 32;
+        const diff = bBot - groundTileTop;
+        if (Math.abs(diff) < 10 && body.velocity.y >= 0) {
+          body.y = groundTileTop - body.height;
+          this.player.y = body.y + this.player.displayOriginY * Math.abs(this.player.scaleY) - body.offset.y * Math.abs(this.player.scaleY);
+        }
+      });
     }
 
-    const onGround = (this.player.body.blocked && this.player.body.blocked.down) || (this.player.body.touching && this.player.body.touching.down);
-    if (jumpPressed && onGround) {
-      this.player.setVelocityY(-this.jumpSpeed);
+    const onFloor = this.player.body.blocked.down || this._onSlope;
+    if (this._offGroundCount == null) this._offGroundCount = 999;
+    if (onFloor) {
+      this._offGroundCount = 0;
+    } else {
+      this._offGroundCount++;
     }
+    const stableGrounded = onFloor || this._offGroundCount < 3;
+
+    // reset jumps when grounded
+    if (onFloor) this._jumpsUsed = 0;
+
+    // Slope sliding: when idle on a slope, slide down
+    if (this._onSlope && !left && !right && this._slopeType) {
+      const slideSpeed = 80;
+      if (this._slopeType === 'diagonal_bottom_left_to_top_right') {
+        this.player.body.velocity.x = -slideSpeed;
+      } else if (this._slopeType === 'diagonal_rop_left_to_bottom_right') {
+        this.player.body.velocity.x = slideSpeed;
+      }
+    }
+
+    // Shooting
+    const shootPressed = (this.keys.CTRL && Phaser.Input.Keyboard.JustDown(this.keys.CTRL)) || (this.keys.F && Phaser.Input.Keyboard.JustDown(this.keys.F));
+    if (shootPressed) {
+      this._playAnim('shoot');
+      this.shootBullet();
+      this._shootUntil = this.time.now + 600;
+      if (!this._shootEventRegistered) {
+        this._shootEventRegistered = true;
+        this.player.on('animationcomplete', (anim) => {
+          if (anim.key === 'shoot') this._shootUntil = 0;
+        });
+      }
+    }
+
+    const isShooting = this._shootUntil > this.time.now;
+
+    // Always apply movement, even during shooting
+    if (left) {
+      this.player.setVelocityX(-currentSpeed);
+      this.player.flipX = true;
+    } else if (right) {
+      this.player.setVelocityX(currentSpeed);
+      this.player.flipX = false;
+    } else if (!this._onSlope) {
+      this.player.setVelocityX(0);
+    }
+
+    // Only change animation when not shooting
+    if (!isShooting) {
+      if (left || right) {
+        if (stableGrounded) this._playAnim('walk');
+      } else {
+        if (stableGrounded) this._playAnim('idle');
+      }
+      if (!stableGrounded) {
+        if (this.player.body.velocity.y < 0) {
+          this._playAnim('jump_up');
+        } else {
+          this._playAnim('jump_down');
+        }
+      }
+    }
+
+    if ((jumpPressed && stableGrounded) || (jumpPressed && this._jumpsUsed < 2)) {
+      this.player.setVelocityY(-this.jumpSpeed);
+      this._jumpsUsed++;
+      if (this.cache.audio.exists('sfx_jump')) this.sound.play('sfx_jump');
+    }
+
+    // bullet-enemy collision
+    if (this._bullets && this.enemies) {
+      for (let bi = this._bullets.length - 1; bi >= 0; bi--) {
+        const bullet = this._bullets[bi];
+        if (!bullet.active) continue;
+        for (const enemy of this.enemies) {
+          if (!enemy.active || enemy._isDead) continue;
+          if (Phaser.Geom.Intersects.RectangleToRectangle(bullet.getBounds(), enemy.getBounds())) {
+            bullet.destroy();
+            this._bullets.splice(bi, 1);
+            enemy.hp--;
+            if (enemy.hp <= 0) {
+              enemy._isDead = true;
+              enemy.body.setVelocity(0, 0);
+              enemy.body.setAllowGravity(false);
+              if (this.cache.audio.exists('sfx_enemy_destroyed')) this.sound.play('sfx_enemy_destroyed');
+            }
+            if (this.anims.exists('alien_exploding')) enemy.play('alien_exploding');
+            break;
+          }
+        }
+      }
+      this._bullets = this._bullets.filter(b => b.active);
+    }
+
+    // enemy patrol
+    if (this.enemies) {
+      for (const enemy of this.enemies) {
+        if (!enemy.active || enemy._isDead) continue;
+        if (enemy.body.blocked.left) enemy._dir = 1;
+        if (enemy.body.blocked.right) enemy._dir = -1;
+        const checkY = enemy.body.y + enemy.body.height + 4;
+        const aheadX = enemy.x + enemy._dir * 24;
+        let groundTile = this.walkLayer ? this.walkLayer.getTileAtWorldXY(aheadX, checkY) : null;
+        if ((!groundTile || groundTile.index < 0) && this.platformLayer) {
+          groundTile = this.platformLayer.getTileAtWorldXY(aheadX, checkY);
+        }
+        if (!groundTile || groundTile.index < 0) enemy._dir *= -1;
+        enemy.body.setVelocityX(enemy._dir * enemy._speed);
+        enemy.flipX = enemy._dir === -1;
+      }
+    }
+
+    // update HUD hearts
+    if (this._heartSprites && this._heartFrames) {
+      const { full, half, empty } = this._heartFrames;
+      for (let i = 0; i < this._heartSprites.length; i++) {
+        const remaining = this.playerHealth - i * 2;
+        let frameKey;
+        if (remaining >= 2) frameKey = full;
+        else if (remaining === 1) frameKey = half;
+        else frameKey = empty;
+        this._heartSprites[i].setTexture(frameKey);
+      }
+    }
+  }
+
+  _playAnim(key) {
+    if (this.anims.exists(key)) this.player.play(key, true);
+  }
+
+  shootBullet() {
+    const dir = this.player.flipX ? -1 : 1;
+    const bx = this.player.x + dir * 30;
+    const by = this.player.y - 20;
+    const bullet = this.physics.add.image(bx, by, '__DEFAULT');
+    bullet.setScale(0.15);
+    bullet.setTint(0xffcc00);
+    bullet.setDepth(5);
+    bullet.body.setAllowGravity(false);
+    bullet.setVelocityX(dir * 600);
+    this._bullets = this._bullets || [];
+    this._bullets.push(bullet);
+    if (this.cache.audio.exists('sfx_shot')) this.sound.play('sfx_shot');
+    // Remove after 2 seconds
+    this.time.delayedCall(2000, () => {
+      if (bullet.active) {
+        bullet.destroy();
+        this._bullets = this._bullets.filter(b => b.active);
+      }
+    });
+  }
+
+  applySlopeAdjustment() {
+    if (!this.player || !this.player.body || !this.diagonalTileMap || this.diagonalTileMap.size === 0) return;
+    this._onSlope = false;
+    this._slopeType = null;
+    const body = this.player.body;
+    const feetX = this.player.x;
+    const checkY = body.y + body.height - 1;
+    let tile = null;
+    if (this.walkLayer) tile = this.walkLayer.getTileAtWorldXY(feetX, checkY);
+    if ((!tile || !this.diagonalTileMap.has(tile.index)) && this.platformLayer) {
+      tile = this.platformLayer.getTileAtWorldXY(feetX, checkY);
+    }
+    if (tile && this.diagonalTileMap.has(tile.index) && body.velocity.y >= 0) {
+      this._onSlope = true;
+      this._slopeType = this.diagonalTileMap.get(tile.index);
+      body.allowGravity = false;
+      body.velocity.y = 0;
+      const slopeType = this.diagonalTileMap.get(tile.index);
+      const localX = feetX - tile.getLeft();
+      const tileH = tile.height;
+      let surfaceY;
+      if (slopeType === 'diagonal_bottom_left_to_top_right') {
+        surfaceY = tile.getTop() + tileH - localX;
+      } else if (slopeType === 'diagonal_rop_left_to_bottom_right') {
+        surfaceY = tile.getTop() + localX;
+      } else {
+        this._slopeType = null;
+        return;
+      }
+      const bodyBottom = body.y + body.height;
+      const diff = surfaceY - bodyBottom;
+      if (Math.abs(diff) > 0.5) {
+        this.player.y += diff;
+      }
+    } else if (this._onSlopePrev) {
+      body.allowGravity = true;
+      this._slopeType = null;
+    }
+    this._onSlopePrev = this._onSlope;
   }
 
   createFramesFromAnnotations(prefix, imageKey, annotations) {
@@ -242,6 +430,66 @@ class MainScene extends Phaser.Scene {
       ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
       canvasTex.refresh();
     });
+  }
+
+  createCharacterFrames() {
+    const annotations = this.cache.json.get('character_annot');
+    if (!annotations || !Array.isArray(annotations)) return null;
+    const srcImage = this.textures.get('character_img').getSourceImage();
+    const byType = { walk: [], idle: [], jump: [], shoot: [] };
+    annotations.forEach((a, i) => {
+      const key = `char_${i}`;
+      const canvasTex = this.textures.createCanvas(key, a.width, a.height);
+      const ctx = canvasTex.getContext();
+      ctx.clearRect(0, 0, a.width, a.height);
+      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
+      canvasTex.refresh();
+      const nl = a.name.toLowerCase();
+      if (nl.startsWith('walk')) byType.walk.push(key);
+      else if (nl.startsWith('idle')) byType.idle.push(key);
+      else if (nl.startsWith('jump')) byType.jump.push(key);
+      else if (nl.startsWith('shoot')) byType.shoot.push(key);
+    });
+    return byType;
+  }
+
+  createEnemyFrames() {
+    const annotations = this.cache.json.get('alienbot_annot');
+    if (!annotations || !Array.isArray(annotations)) return null;
+    const srcImage = this.textures.get('alienbot_img').getSourceImage();
+    const byType = { walk: [], exploding: [], dead: [] };
+    annotations.forEach((a, i) => {
+      const key = `alien_${i}`;
+      const canvasTex = this.textures.createCanvas(key, a.width, a.height);
+      const ctx = canvasTex.getContext();
+      ctx.clearRect(0, 0, a.width, a.height);
+      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
+      canvasTex.refresh();
+      const nl = a.name.toLowerCase();
+      if (nl.startsWith('walk')) byType.walk.push(key);
+      else if (nl.startsWith('explod')) byType.exploding.push(key);
+      else if (nl.startsWith('dead')) byType.dead.push(key);
+    });
+    return byType;
+  }
+
+  createHudHeartFrames() {
+    const annotations = this.cache.json.get('hud_annot');
+    if (!annotations || !Array.isArray(annotations)) return null;
+    const srcImage = this.textures.get('hud_img').getSourceImage();
+    const hearts = {};
+    annotations.forEach((a, i) => {
+      const key = `hud_${i}`;
+      const canvasTex = this.textures.createCanvas(key, a.width, a.height);
+      const ctx = canvasTex.getContext();
+      ctx.clearRect(0, 0, a.width, a.height);
+      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
+      canvasTex.refresh();
+      if (a.name === 'heart full') hearts.full = key;
+      else if (a.name === 'heart half') hearts.half = key;
+      else if (a.name === 'heart empty') hearts.empty = key;
+    });
+    return hearts.full && hearts.half && hearts.empty ? hearts : null;
   }
 
 }
@@ -305,9 +553,26 @@ function convertInfiniteToFinite(tmj) {
 }
 
 function setupMapAndPlayer(map, tileset) {
-  // Create background & collision layers if present
+  // Create all visual layers in correct order
   const bgLayer = map.createLayer('Background', tileset, 0, 0);
+  if (bgLayer) bgLayer.setDepth(0);
+  const bgParallaxLayer = map.createLayer('BackgroundParallax', tileset, 0, 0);
+  if (bgParallaxLayer) bgParallaxLayer.setDepth(1);
+  const bgObjectsLayer = map.createLayer('BackgroundObjects', tileset, 0, 0);
+  if (bgObjectsLayer) bgObjectsLayer.setDepth(2);
   const walkLayer = map.createLayer('Walk on', tileset, 0, 0);
+  if (walkLayer) walkLayer.setDepth(3);
+  const platformLayer = map.createLayer('Walk on and jump through', tileset, 0, 0);
+  if (platformLayer) platformLayer.setDepth(4);
+  const fgLayer = map.createLayer('Foreground', tileset, 0, 0);
+  if (fgLayer) fgLayer.setDepth(5);
+  // Create the Character spawn point layer if it exists (invisible, used for spawn detection)
+  const spawnTileLayer = map.createLayer('Character spawn point', tileset, 0, 0);
+  if (spawnTileLayer) spawnTileLayer.setVisible(false);
+
+  // Create the Enemy spawn points layer (invisible)
+  const enemySpawnLayer = map.createLayer('Enemy spawn points', tileset, 0, 0);
+  if (enemySpawnLayer) enemySpawnLayer.setVisible(false);
 
   // set collisions on all non-empty tiles
   if (walkLayer) {
@@ -328,43 +593,90 @@ function setupMapAndPlayer(map, tileset) {
   const worldHeight = map.heightInPixels;
   this.physics.world.setBounds(0, 0, worldWidth, worldHeight);
 
-  // create textures from annotations (variable-sized frames)
-  this.createFramesFromAnnotations('walking', 'walking_img', this.cache.json.get('walking_annot'));
-  this.createFramesFromAnnotations('shooting', 'shooting_img', this.cache.json.get('shooting_annot'));
+  // Store walkLayer, platformLayer and build diagonal tile map for slope handling
+  this.walkLayer = walkLayer;
+  this.platformLayer = platformLayer;
+  this.diagonalTileMap = new Map();
+  const tsMetaDiagonal = this.cache.json.get('tileset_tsj');
+  if (tsMetaDiagonal && tsMetaDiagonal.tiles) {
+    tsMetaDiagonal.tiles.forEach(t => {
+      if (t.type === 'diagonal_bottom_left_to_top_right' || t.type === 'diagonal_rop_left_to_bottom_right') {
+        this.diagonalTileMap.set(t.id, t.type);
+      }
+    });
+  }
+  // Remove collision from diagonal tiles on both layers
+  const removeDiagCollision = (layer) => {
+    if (layer && this.diagonalTileMap.size > 0) {
+      try {
+        layer.forEachTile(tile => {
+          if (tile && this.diagonalTileMap.has(tile.index)) tile.setCollision(false);
+        });
+      } catch (e) {}
+    }
+  };
+  removeDiagCollision(walkLayer);
+  removeDiagCollision(platformLayer);
 
-  // create player at a reasonable start
+  // create character frames from the single spritesheet
+  const charFrames = this.createCharacterFrames();
+
   // create player and scale down to match tile size
-  this.player = this.physics.add.sprite(100, 100, 'walking_0');
+  this.player = this.physics.add.sprite(100, 100, charFrames && charFrames.idle.length ? charFrames.idle[0] : 'char_0');
   const PLAYER_SCALE = 0.3;
-  // set origin to bottom-center so positioning is easier (y = bottom)
   this.player.setOrigin(0.5, 1);
   this.player.setScale(PLAYER_SCALE);
+  this.player.setDepth(4.5);
   this.player.setCollideWorldBounds(true);
-  // adjust physics body to match scaled sprite (narrower and slightly shorter)
-  const bodyW = Math.floor(this.player.width * PLAYER_SCALE * 0.6);
-  const bodyH = Math.floor(this.player.height * PLAYER_SCALE * 0.85);
+  const bodyW = Math.floor(this.player.width * 0.6);
+  const bodyH = Math.floor(this.player.height * 0.85);
   this.player.body.setSize(bodyW, bodyH);
-  // center the body horizontally and align bottom of body with sprite bottom
-  const offsetX = Math.floor((this.player.displayWidth - bodyW) / 2);
-  const offsetY = Math.floor(this.player.displayHeight - bodyH - 2);
+  const offsetX = Math.floor((this.player.width - bodyW) / 2);
+  const offsetY = Math.floor(this.player.height - bodyH);
   this.player.body.setOffset(offsetX, offsetY);
+  this.player.body.bounce.set(0);
 
-  // player animations (walking frames)
-  // build walking frames: exclude the original source image key and sort numerically
-  const walkFrames = this.textures.getTextureKeys().filter(k => k.startsWith('walking_') && k !== 'walking_img')
-    .sort((a,b) => (parseInt(a.split('_')[1] || '0',10) - parseInt(b.split('_')[1] || '0',10)));
-  if (walkFrames.length) {
-    this.anims.create({ key: 'walk', frames: walkFrames.map(k => ({ key: k })), frameRate: 8, repeat: -1 });
+  // player animations from single-sprite frames
+  if (charFrames) {
+    if (charFrames.walk.length) {
+      this.anims.create({ key: 'walk', frames: charFrames.walk.map(k => ({ key: k })), frameRate: 8, repeat: -1 });
+    }
+    if (charFrames.idle.length) {
+      this.anims.create({ key: 'idle', frames: charFrames.idle.map(k => ({ key: k })), frameRate: 6, repeat: -1 });
+    }
+    if (charFrames.jump.length) {
+      const mid = Math.floor(charFrames.jump.length / 2);
+      this.anims.create({ key: 'jump_up', frames: charFrames.jump.slice(0, mid).map(k => ({ key: k })), frameRate: 12, repeat: 0 });
+      this.anims.create({ key: 'jump_down', frames: charFrames.jump.slice(mid).map(k => ({ key: k })), frameRate: 12, repeat: 0 });
+    }
+    if (charFrames.shoot.length) {
+      const [idle, aim, shooting] = charFrames.shoot;
+      this.anims.create({ key: 'shoot', frames: [idle, aim, shooting, aim, idle].map(k => ({ key: k })), frameRate: 8, repeat: 0 });
+    }
   }
 
-  const shootFrames = this.textures.getTextureKeys().filter(k => k.startsWith('shooting_') && k !== 'shooting_img')
-    .sort((a,b) => (parseInt(a.split('_')[1] || '0',10) - parseInt(b.split('_')[1] || '0',10)));
-  if (shootFrames.length) {
-    this.anims.create({ key: 'shoot', frames: shootFrames.map(k => ({ key: k })), frameRate: 6, repeat: 0 });
+  // collisions — zero vertical velocity post-collision to kill micro-bounce
+  if (walkLayer) {
+    this.physics.add.collider(this.player, walkLayer, (_p) => { _p.body.velocity.y = 0; });
   }
 
-  // collisions
-  if (walkLayer) this.physics.add.collider(this.player, walkLayer);
+  // one-way platform collisions (jump through from below)
+  if (platformLayer) {
+    let emptyIdx = 0;
+    platformLayer.forEachTile(t => { if (t && t.index < 0) emptyIdx = -1; });
+    platformLayer.setCollisionByExclusion([emptyIdx]);
+    // Remove collision from diagonal tiles on platform layer
+    if (this.diagonalTileMap && this.diagonalTileMap.size > 0) {
+      try {
+        platformLayer.forEachTile(tile => {
+          if (tile && this.diagonalTileMap.has(tile.index)) tile.setCollision(false);
+        });
+      } catch (e) {}
+    }
+    this.physics.add.collider(this.player, platformLayer, (_p) => { _p.body.velocity.y = 0; }, (player, tile) => {
+      return player.body.velocity.y >= 0 && player.body.y + player.body.height <= tile.y + tile.height / 2;
+    });
+  }
 
   // Determine which tile index represents empty for this layer and set collisions accordingly
   if (walkLayer) {
@@ -378,13 +690,26 @@ function setupMapAndPlayer(map, tileset) {
         walkLayer.forEachTile(tile => {
           if (tile && typeof tile.index === 'number' && tile.index >= 0) indices.add(tile.index);
         });
-        const idxArray = Array.from(indices);
+        const idxArray = Array.from(indices).filter(idx => !this.diagonalTileMap || !this.diagonalTileMap.has(idx));
         if (idxArray.length) walkLayer.setCollision(idxArray);
       }
     } catch (e) {
-      // fallback: default behavior
-      walkLayer.setCollisionByExclusion([0]);
+      let emptyIdx = 0;
+      try { walkLayer.forEachTile(t => { if (t && t.index < 0) emptyIdx = -1; }); } catch (e2) {}
+      walkLayer.setCollisionByExclusion([emptyIdx]);
     }
+    // Safety net: re-remove diagonal tile collision (in case catch block overrode it)
+    const removeDiagCollision = (layer) => {
+      if (layer && this.diagonalTileMap && this.diagonalTileMap.size > 0) {
+        try {
+          layer.forEachTile(tile => {
+            if (tile && this.diagonalTileMap.has(tile.index)) tile.setCollision(false);
+          });
+        } catch (e) {}
+      }
+    };
+    removeDiagCollision(walkLayer);
+    removeDiagCollision(platformLayer);
   }
 
   // If possible, place player on top of the first non-empty tile in Walk on layer
@@ -398,47 +723,125 @@ function setupMapAndPlayer(map, tileset) {
       // ignore if layer iteration not available
       spawnTile = null;
     }
-    if (spawnTile) {
-      const spawnX = spawnTile.getCenterX ? spawnTile.getCenterX() : (spawnTile.pixelX + (spawnTile.width || 32)/2);
-      const tileTop = (typeof spawnTile.getTop === 'function') ? spawnTile.getTop() : spawnTile.pixelY;
-      // compute y so the physics body bottom aligns with tileTop:
-      const displayH = this.player.displayHeight || (this.player.height * this.player.scaleY);
-      const bodyH = (this.player.body && this.player.body.height) || Math.floor(this.player.height * PLAYER_SCALE * 0.85);
-      const offsetY = (this.player.body && this.player.body.offset && this.player.body.offset.y) || (this.player.body && this.player.body.offsetY) || 0;
-      // initial desired Y so the physics body bottom aligns with tileTop
-      let desiredY = tileTop + displayH - offsetY - bodyH;
-      this.player.setPosition(spawnX, desiredY);
-      // allow physics body to exist/refresh and then compute actual bottom to correct any mismatch
-      if (this.player.body) {
-        this.player.body.velocity.y = 0;
-        const bodyBottom = (this.player.body.y || 0) + (this.player.body.height || 0);
-        const diff = bodyBottom - tileTop;
-        console.log('spawn align auto-correct:', { tileTop, displayH, bodyH, offsetY, desiredY, bodyBottom, diff });
-        if (Math.abs(diff) > 0.5) {
-          // move player up by the overlap amount
-          desiredY = desiredY - diff;
-          this.player.setPosition(spawnX, desiredY);
-          // reset velocity after adjustment
-          this.player.body.velocity.y = 0;
-          const bodyBottom2 = (this.player.body.y || 0) + (this.player.body.height || 0);
-          console.log('after adjust bodyBottom2 vs tileTop', { bodyBottom2, tileTop, diff2: bodyBottom2 - tileTop });
+      // Determine spawn tile: prefer an object layer with objects of type/class 'character_spawn_point',
+      // otherwise search tile layers for tiles whose tileset entry has type 'character_spawn_point'.
+      let spawnX = null, spawnTileTop = null, spawnMethod = null;
+      // 0) explicit tile layer named 'character spawn point'
+      try {
+        const explicit = map.getLayer && (map.getLayer('character spawn point') || map.getLayer('Character spawn point'));
+        const tileLayer = explicit && (explicit.tilemapLayer || explicit);
+        if (tileLayer && typeof tileLayer.forEachTile === 'function') {
+          let found = false;
+          tileLayer.forEachTile(tile => {
+            if (found || !tile || tile.index < 0) return;
+            spawnX = tile.getCenterX ? tile.getCenterX() : (tile.pixelX + (tile.width || 32)/2);
+            spawnTileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+            found = true;
+          });
+          if (spawnX !== null) spawnMethod = 'explicit-tile-layer';
         }
-      }
-    }
-  }
+      } catch (e) {}
 
-  // 'Walk on and jump through' layer: one-way platforms (player can jump up through, land when falling)
-  if (map.getLayer('Walk on and jump through')) {
-    const jumpLayer = map.createLayer('Walk on and jump through', tileset, 0, 0);
-    jumpLayer.setCollisionByExclusion([0]);
-    const processCallback = (player, tile) => {
-      if (!player.body) return false;
-      const vy = player.body.velocity.y;
-      const playerBottom = player.body.y + player.body.height;
-      const tileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
-      return vy >= 0 && (playerBottom <= (tileTop + 8));
-    };
-    this.physics.add.collider(this.player, jumpLayer, null, processCallback, this);
+      // 1) object layer search in map.mapData (if provided)
+      try {
+        const mapData = map.mapData || (map && map.map && map.map.mapData) || null;
+        if (mapData && Array.isArray(mapData.layers)) {
+          for (const lyr of mapData.layers) {
+            if (lyr.type === 'objectgroup' && Array.isArray(lyr.objects)) {
+              const obj = lyr.objects.find(o => (o.type && o.type === 'character_spawn_point') || (o.class && o.class === 'character_spawn_point'));
+              if (obj) {
+                spawnX = (obj.x || 0) + ((obj.width || 0) / 2);
+                spawnTileTop = (obj.y || 0) - (obj.height || 0);
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 2) tile-based spawn: check tileset metadata for tiles flagged as character_spawn_point
+      if (spawnX === null) {
+        try {
+          const tsMeta = this.cache.json.get('tileset_tsj');
+          const spawnTileIds = new Set((tsMeta && tsMeta.tiles || []).filter(t => t.type === 'character_spawn_point').map(t => t.id));
+          if (spawnTileIds.size > 0) {
+            // iterate layer names known on map (fakeMap exposes layerNames)
+            const layerNames = map.layerNames || (map.layers && map.layers.map(l => l.name)) || [];
+            for (const lname of layerNames) {
+              const lyr = map.getLayer && map.getLayer(lname);
+              const tileLayer = lyr && (lyr.tilemapLayer || lyr);
+              if (!tileLayer || typeof tileLayer.forEachTile !== 'function') continue;
+              let found = false;
+              tileLayer.forEachTile(tile => {
+                if (found || !tile) return;
+                // compute local id: for fakeMap tiles local id equals tile.index; for real tiles, subtract tileset.firstgid if available
+                let localId = tile.index;
+                try {
+                  if (tileset && typeof tileset.firstgid === 'number') localId = tile.index - tileset.firstgid;
+                  else if (typeof map.firstgid === 'number') localId = tile.index - map.firstgid;
+                } catch (e) {}
+                if (spawnTileIds.has(localId)) {
+                  spawnX = tile.getCenterX ? tile.getCenterX() : (tile.pixelX + (tile.width || 32)/2);
+                  spawnTileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+                  found = true;
+                }
+              });
+              if (spawnX !== null) { spawnMethod = 'tileset-typed-tile'; break; }
+            }
+          }
+        } catch (e) { console.warn('spawn tile detection failed', e); }
+      }
+
+      // 3) fallback: first non-empty tile in walkLayer
+      if (spawnX === null) {
+        try {
+          let found = false;
+          walkLayer.forEachTile(tile => {
+            if (found || !tile || tile.index < 0) return;
+            spawnX = tile.getCenterX ? tile.getCenterX() : (tile.pixelX + (tile.width || 32)/2);
+            spawnTileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+            found = true;
+          });
+          if (spawnX !== null) spawnMethod = 'walk-layer-fallback';
+        } catch (e) {}
+      }
+
+      // 4) use spawnPos from Character spawn point layer (extracted from raw map data)
+      if (spawnX === null && map.spawnPos) {
+        spawnX = map.spawnPos.x;
+        spawnTileTop = map.spawnPos.y;
+        spawnMethod = 'spawn-layer-raw';
+      }
+
+      if (spawnX !== null && spawnTileTop !== null) {
+        console.log('spawn chosen method:', spawnMethod, 'spawnX:', spawnX, 'tileTop:', spawnTileTop);
+        const tileTop = spawnTileTop;
+        // compute y so the sprite bottom is placed near tileTop, then correct using live body
+        const displayH = this.player.displayHeight || (this.player.height * this.player.scaleY);
+        const SPAWN_EXTRA_NUDGE = -6;
+        let desiredY = tileTop + SPAWN_EXTRA_NUDGE;
+        this.player.setPosition(spawnX, desiredY);
+        // delayed correction
+        this.time.delayedCall(50, () => {
+          if (!this.player || !this.player.body) return;
+          this.player.body.velocity.y = 0;
+          if (typeof this.player.body.updateFromGameObject === 'function') this.player.body.updateFromGameObject();
+          const bodyY = this.player.body.y;
+          const bodyHLive = this.player.body.height;
+          const bodyBottomLive = bodyY + bodyHLive;
+          console.log('delayed align check:', { tileTop, desiredY, bodyY, bodyHLive, bodyBottomLive });
+          const diffLive = bodyBottomLive - tileTop;
+          if (Math.abs(diffLive) > 0.5) {
+            const newY = this.player.y - diffLive;
+            console.log('adjusting player by', -diffLive, 'to newY', newY);
+            this.player.setPosition(spawnX, newY);
+            if (typeof this.player.body.updateFromGameObject === 'function') this.player.body.updateFromGameObject();
+            if (this.player.body) this.player.body.velocity.y = 0;
+            const bodyBottomAfter = (this.player.body.y || 0) + (this.player.body.height || 0);
+            console.log('after delayed adjust bodyBottomAfter vs tileTop', { bodyBottomAfter, tileTop, diffAfter: bodyBottomAfter - tileTop });
+          }
+        });
+      }
   }
 
   // camera
@@ -447,13 +850,96 @@ function setupMapAndPlayer(map, tileset) {
 
   // controls: arrows, WASD, space
   this.cursors = this.input.keyboard.createCursorKeys();
-  this.keys = this.input.keyboard.addKeys({ W: 'W', A: 'A', S: 'S', D: 'D', SPACE: 'SPACE' });
+  this.keys = this.input.keyboard.addKeys({ W: 'W', A: 'A', S: 'S', D: 'D', SPACE: 'SPACE', SHIFT: 'SHIFT', CTRL: 'CTRL', F: 'F' });
+  this.input.keyboard.addCapture(17); // CTRL key code
 
   // physics tuning
-  this.player.setBounce(0.05);
+  this.player.setBounce(0);
   this.player.setDragX(600);
   this.speed = 220;
-  this.jumpSpeed = 420;
+  this.jumpSpeed = 550;
+
+  // --- enemy setup ---
+  const enemyFrames = this.createEnemyFrames();
+  if (enemyFrames) {
+    if (enemyFrames.walk.length) {
+      this.anims.create({ key: 'alien_walk', frames: enemyFrames.walk.map(k => ({ key: k })), frameRate: 6, repeat: -1 });
+    }
+    if (enemyFrames.exploding.length) {
+      this.anims.create({ key: 'alien_exploding', frames: enemyFrames.exploding.map(k => ({ key: k })), frameRate: 8, repeat: 0 });
+    }
+    if (enemyFrames.dead.length) {
+      this.anims.create({ key: 'alien_dead', frames: enemyFrames.dead.map(k => ({ key: k })), frameRate: 6, repeat: 0 });
+    }
+  }
+
+  this.enemies = [];
+  if (enemySpawnLayer && enemyFrames) {
+    const spawnLocalId = 1090;
+    const ENEMY_SCALE = 0.4;
+    enemySpawnLayer.forEachTile(tile => {
+      if (!tile || tile.index < 0) return;
+      let localId = tile.index;
+      if (tileset && typeof tileset.firstgid === 'number') localId = tile.index - tileset.firstgid;
+      if (localId !== spawnLocalId) return;
+      const ex = tile.getCenterX ? tile.getCenterX() : (tile.pixelX + 16);
+      const ey = tile.pixelY;
+      const enemy = this.physics.add.sprite(ex, ey, enemyFrames.walk.length ? enemyFrames.walk[0] : 'alien_0');
+      enemy.setOrigin(0.5, 1);
+      enemy.setScale(ENEMY_SCALE);
+      enemy.setDepth(4.5);
+      enemy.setCollideWorldBounds(true);
+      enemy.body.bounce.set(0);
+      enemy.hp = 3;
+      enemy._isDead = false;
+      if (walkLayer) this.physics.add.collider(enemy, walkLayer, (_e) => { _e.body.velocity.y = 0; });
+      if (platformLayer) this.physics.add.collider(enemy, platformLayer, (_e) => { _e.body.velocity.y = 0; });
+      if (this.anims.exists('alien_walk')) enemy.play('alien_walk');
+      enemy._dir = Math.random() < 0.5 ? 1 : -1;
+      enemy._speed = 40;
+      enemy.on('animationcomplete', (anim) => {
+        if (anim.key === 'alien_exploding') {
+          if (enemy._isDead) {
+            if (this.anims.exists('alien_dead')) enemy.play('alien_dead');
+          } else if (this.anims.exists('alien_walk')) {
+            enemy.play('alien_walk');
+          }
+        }
+      });
+      this.enemies.push(enemy);
+    });
+  }
+
+  // --- HUD & health ---
+  this.playerHealth = 6;
+  this._invulnUntil = 0;
+  const heartFrames = this.createHudHeartFrames();
+  this._heartFrames = heartFrames;
+  this._heartSprites = [];
+  if (heartFrames) {
+    for (let i = 0; i < 3; i++) {
+      const heart = this.add.image(20 + i * 22, 20, heartFrames.full);
+      heart.setScrollFactor(0);
+      heart.setDepth(100);
+      this._heartSprites.push(heart);
+    }
+  }
+
+  // player-enemy damage collision
+  if (this.enemies.length) {
+    for (const enemy of this.enemies) {
+      this.physics.add.overlap(this.player, enemy, () => {
+        if (enemy._isDead) return;
+        if (this.time.now < this._invulnUntil) return;
+        this.playerHealth--;
+        this._invulnUntil = this.time.now + 1000;
+        if (this.playerHealth <= 0) {
+          this.playerHealth = 0;
+          this.scene.restart();
+        }
+      });
+    }
+  }
 }
 
 
@@ -471,7 +957,7 @@ const config = {
   physics: {
     default: 'arcade',
     arcade: {
-      gravity: { y: 1000 },
+      gravity: { y: 1400 },
       debug: false
     }
   },

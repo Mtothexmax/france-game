@@ -1,0 +1,4 @@
+what i also do not like is that the player sometimes does not jump when i press left or right + shift + jump. it seems that when i press so many keys the keyboard listeing becomes not working fine
+
+
+i added a tile with the class alienbot_spawning_point to  the layer Enemy spawn points and i added an enemy folder where the enemy is with its spritesheet

@@ -1,14 +1,32 @@
 {
-  "columns": 48,
+  "columns": 63,
   "image": "tileset.png",
-  "imageheight": 1952,
-  "imagewidth": 1536,
+  "imageheight": 2720,
+  "imagewidth": 2016,
   "margin": 0,
   "name": "tileset",
   "spacing": 0,
-  "tilecount": 2928,
+  "tilecount": 5355,
   "tiledversion": "1.11.2",
   "tileheight": 32,
+  "tiles": [
+    {
+      "id": 1089,
+      "type": "character_spawn_point"
+    },
+    {
+      "id": 1090,
+      "type": "alienbot_spawning_point"
+    },
+    {
+      "id": 2563,
+      "type": "diagonal_bottom_left_to_top_right"
+    },
+    {
+      "id": 2564,
+      "type": "diagonal_rop_left_to_bottom_right"
+    }
+  ],
   "tilewidth": 32,
   "type": "tileset",
   "version": "1.10",

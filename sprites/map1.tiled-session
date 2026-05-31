@@ -3,7 +3,7 @@
         "height": 4300,
         "width": 2
     },
-    "activeFile": "map1.tmj",
+    "activeFile": "tileset.tsj",
     "expandedProjectPaths": [
         "."
     ],
@@ -12,12 +12,16 @@
             "scaleInDock": 1
         },
         "map1.tmj": {
-            "scale": 0.25,
-            "selectedLayer": 1,
+            "scale": 1,
+            "selectedLayer": 4,
             "viewCenter": {
-                "x": 538,
-                "y": 306
+                "x": 221.5,
+                "y": 52.5
             }
+        },
+        "map1.tmj#tileset": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
         },
         "tileset.tsj": {
             "scaleInDock": 1,
@@ -37,8 +41,8 @@
     ],
     "project": "map1.tiled-project",
     "recentFiles": [
-        "tileset.tsj",
         "map1.tmj",
+        "tileset.tsj",
         "tileset.tsx"
     ],
     "tileset.lastUsedFormat": "json"

@@ -1,5 +1,7 @@
 Phaser Jump'n'Run — France Game
 
+https://mtothexmax.github.io/france-game/
+
 Purpose
 
 This repository contains a minimal Phaser 3 platformer that loads a Tiled map (`sprites/map1.tmj`) and a tileset image (`sprites/tileset.png`). The playable character is composed from the images and rectangle annotations inside `sprites/character/`.

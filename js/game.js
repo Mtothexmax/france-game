@@ -401,12 +401,18 @@ class MainScene extends Phaser.Scene {
     const style = document.createElement('style');
     style.textContent = '@media(max-width:1024px){#game{height:calc(100vh - 160px)!important}}';
     document.head.appendChild(style);
-    const btnStyle = `width:56px;height:56px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;font-size:22px;font-weight:bold;border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:manipulation;pointer-events:auto;`;
+    const btnSizePx = Math.min(window.innerWidth * 0.12, 80);
+    const gapPx = Math.min(window.innerWidth * 0.02, 14);
+    const vGapPx = Math.min(window.innerWidth * 0.06, 36);
+    const fontSizePx = Math.min(window.innerWidth * 0.05, 32);
+    const btnStyle = `width:${btnSizePx}px;height:${btnSizePx}px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;font-size:${fontSizePx}px;font-weight:bold;border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:manipulation;pointer-events:auto;font-family:'Arial Black',Arial,sans-serif;`;
     const container = document.createElement('div');
     container.id = 'mobile-controls';
-    container.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:1000;display:flex;justify-content:space-between;align-items:flex-end;padding:10px 20px 20px;pointer-events:none;box-sizing:border-box;';
+    container.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:1000;display:flex;justify-content:space-between;align-items:flex-end;padding:10px 35px 20px;pointer-events:none;box-sizing:border-box;';
     const dpad = document.createElement('div');
-    dpad.style.cssText = 'position:relative;width:130px;height:130px;pointer-events:none;';
+    const dpadW = btnSizePx * 2 + gapPx;
+    const dpadH = btnSizePx;
+    dpad.style.cssText = `position:relative;width:${dpadW}px;height:${dpadH}px;pointer-events:none;`;
     const b = (id, l, t, txt) => {
       const el = document.createElement('div');
       el.id = id;
@@ -417,11 +423,13 @@ class MainScene extends Phaser.Scene {
       el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
       dpad.appendChild(el);
     };
-    b('touch-left', 0, 37, '◀');
-    b('touch-right', 74, 37, '▶');
+    b('touch-left', 0, 0, '◀');
+    b('touch-right', btnSizePx + gapPx, 0, '▶');
     container.appendChild(dpad);
     const abWrap = document.createElement('div');
-    abWrap.style.cssText = 'position:relative;width:100px;height:130px;pointer-events:none;';
+    const abW = btnSizePx;
+    const abH = btnSizePx * 2 + vGapPx;
+    abWrap.style.cssText = `position:relative;width:${abW}px;height:${abH}px;pointer-events:none;`;
     const ab = (id, l, t, bg, txt) => {
       const el = document.createElement('div');
       el.id = id;
@@ -432,8 +440,8 @@ class MainScene extends Phaser.Scene {
       el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
       abWrap.appendChild(el);
     };
-    ab('touch-b', 44, 0, '#c0392b', 'B');
-    ab('touch-a', 0, 60, '#e74c3c', 'A');
+    ab('touch-b', 0, 0, '#c0392b', 'B');
+    ab('touch-a', 0, btnSizePx + vGapPx, '#e74c3c', 'A');
     container.appendChild(abWrap);
     document.body.appendChild(container);
   }

@@ -12,6 +12,8 @@ class MainScene extends Phaser.Scene {
     // enemy spritesheet and annotation
     this.load.image('alienbot_img', 'sprites/enemy/alienbot.png');
     this.load.json('alienbot_annot', 'sprites/enemy/alienbot_annotation.json');
+    this.load.image('blue_alienbot_img', 'sprites/enemy/blue_alienrobot.png');
+    this.load.json('blue_alienbot_annot', 'sprites/enemy/blue_alienrobot_annotation.json');
 
     // music
     this.load.audio('bgm', 'music/Rooftop Dash Paris.mp3');
@@ -20,6 +22,7 @@ class MainScene extends Phaser.Scene {
     this.load.audio('sfx_jump', 'sounds/jump.mp3');
     this.load.audio('sfx_shot', 'sounds/shot.mp3');
     this.load.audio('sfx_enemy_destroyed', 'sounds/enemy destroyed.ogg');
+    this.load.audio('sfx_hit', 'sounds/touched by enemy.ogg');
 
     // HUD
     this.load.image('hud_img', 'sprites/hud/hud.png');
@@ -184,6 +187,14 @@ class MainScene extends Phaser.Scene {
       if (this.cache.audio.exists('bgm')) {
         this.sound.play('bgm', { loop: true, volume: 0.5 });
       }
+
+      // mobile on-screen controls
+      this._touchLeft = false;
+      this._touchRight = false;
+      this._touchJump = false;
+      this._touchJustJump = false;
+      const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 0 && window.innerWidth < 1024);
+      if (isMobile) this._setupMobileControls();
     })();
     // end async IIFE
     return;
@@ -198,11 +209,13 @@ class MainScene extends Phaser.Scene {
     const speedMult = (this.keys.SHIFT && this.keys.SHIFT.isDown) ? 1.6 : 1;
     const currentSpeed = this.speed * speedMult;
 
-    const left = this.cursors.left.isDown || this.keys.A.isDown;
-    const right = this.cursors.right.isDown || this.keys.D.isDown;
-    const jumpPressed = (this.cursors && this.cursors.up && Phaser.Input.Keyboard.JustDown(this.cursors.up))
+    const left = this.cursors.left.isDown || this.keys.A.isDown || this._touchLeft;
+    const right = this.cursors.right.isDown || this.keys.D.isDown || this._touchRight;
+    const jumpPressed = ((this.cursors && this.cursors.up && Phaser.Input.Keyboard.JustDown(this.cursors.up))
       || (this.keys && this.keys.W && Phaser.Input.Keyboard.JustDown(this.keys.W))
-      || (this.keys && this.keys.SPACE && Phaser.Input.Keyboard.JustDown(this.keys.SPACE));
+      || (this.keys && this.keys.SPACE && Phaser.Input.Keyboard.JustDown(this.keys.SPACE))
+      || this._touchJustJump);
+    this._touchJustJump = false;
 
     this.applySlopeAdjustment();
 
@@ -245,7 +258,8 @@ class MainScene extends Phaser.Scene {
     }
 
     // Shooting
-    const shootPressed = (this.keys.CTRL && Phaser.Input.Keyboard.JustDown(this.keys.CTRL)) || (this.keys.F && Phaser.Input.Keyboard.JustDown(this.keys.F));
+    const shootPressed = (this.keys.CTRL && Phaser.Input.Keyboard.JustDown(this.keys.CTRL)) || (this.keys.F && Phaser.Input.Keyboard.JustDown(this.keys.F)) || this._touchJustShoot;
+    this._touchJustShoot = false;
     if (shootPressed) {
       this._playAnim('shoot');
       this.shootBullet();
@@ -261,12 +275,15 @@ class MainScene extends Phaser.Scene {
     const isShooting = this._shootUntil > this.time.now;
 
     // Always apply movement, even during shooting
-    if (left) {
-      this.player.setVelocityX(-currentSpeed);
-      this.player.flipX = true;
-    } else if (right) {
-      this.player.setVelocityX(currentSpeed);
-      this.player.flipX = false;
+    let moveX = 0;
+    if (left) moveX = -1;
+    else if (right) moveX = 1;
+    if ((moveX < 0 && this.player.body.blocked.left) || (moveX > 0 && this.player.body.blocked.right)) {
+      moveX = 0;
+    }
+    if (moveX !== 0) {
+      this.player.setVelocityX(moveX * currentSpeed);
+      this.player.flipX = moveX < 0;
     } else if (!this._onSlope) {
       this.player.setVelocityX(0);
     }
@@ -310,7 +327,8 @@ class MainScene extends Phaser.Scene {
               enemy.body.setAllowGravity(false);
               if (this.cache.audio.exists('sfx_enemy_destroyed')) this.sound.play('sfx_enemy_destroyed');
             }
-            if (this.anims.exists('alien_exploding')) enemy.play('alien_exploding');
+            const explodeKey = enemy._isBlue ? 'blue_alien_exploding' : 'alien_exploding';
+            if (this.anims.exists(explodeKey)) enemy.play(explodeKey);
             break;
           }
         }
@@ -322,6 +340,35 @@ class MainScene extends Phaser.Scene {
     if (this.enemies) {
       for (const enemy of this.enemies) {
         if (!enemy.active || enemy._isDead) continue;
+
+        // blue alien chase
+        if (enemy._isBlue && this.player) {
+          const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
+          if (dist < 800) {
+            const alienRow = Math.floor((enemy.body.y + enemy.body.height) / 32);
+            const playerRow = Math.floor((this.player.body.y + this.player.body.height) / 32);
+            if (Math.abs(alienRow - playerRow) <= 1) {
+              const dirToPlayer = this.player.x < enemy.x ? -1 : 1;
+              let blocked = false;
+              if (this.walkLayer) {
+                const checkY = enemy.body.y + enemy.body.height - 1;
+                const step = 32 * dirToPlayer;
+                for (let x = enemy.x + step; dirToPlayer === 1 ? x < this.player.x : x > this.player.x; x += step) {
+                  const tile = this.walkLayer.getTileAtWorldXY(x, checkY);
+                  if (tile && tile.index >= 0 && !this.diagonalTileMap.has(tile.index)) { blocked = true; break; }
+                }
+              }
+              if (!blocked) {
+                enemy._dir = dirToPlayer;
+                enemy.body.setVelocityX(dirToPlayer * 320);
+                enemy.flipX = dirToPlayer === -1;
+                continue;
+              }
+            }
+          }
+        }
+
+        // normal patrol
         if (enemy.body.blocked.left) enemy._dir = 1;
         if (enemy.body.blocked.right) enemy._dir = -1;
         const checkY = enemy.body.y + enemy.body.height + 4;
@@ -350,6 +397,64 @@ class MainScene extends Phaser.Scene {
     }
   }
 
+  _setupMobileControls() {
+    const style = document.createElement('style');
+    style.textContent = '@media(max-width:1024px){#game{height:calc(100vh - 160px)!important}}';
+    document.head.appendChild(style);
+    const btnStyle = `width:56px;height:56px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;font-size:22px;font-weight:bold;border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:manipulation;pointer-events:auto;`;
+    const container = document.createElement('div');
+    container.id = 'mobile-controls';
+    container.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:1000;display:flex;justify-content:space-between;align-items:flex-end;padding:10px 20px 20px;pointer-events:none;box-sizing:border-box;';
+    const dpad = document.createElement('div');
+    dpad.style.cssText = 'position:relative;width:130px;height:130px;pointer-events:none;';
+    const b = (id, l, t, txt) => {
+      const el = document.createElement('div');
+      el.id = id;
+      el.textContent = txt;
+      el.style.cssText = `position:absolute;left:${l}px;top:${t}px;${btnStyle}`;
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); this._onTouchStart(id); });
+      el.addEventListener('pointerup', (e) => { e.preventDefault(); this._onTouchEnd(id); });
+      el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
+      dpad.appendChild(el);
+    };
+    b('touch-left', 0, 37, '◀');
+    b('touch-right', 74, 37, '▶');
+    container.appendChild(dpad);
+    const abWrap = document.createElement('div');
+    abWrap.style.cssText = 'position:relative;width:100px;height:130px;pointer-events:none;';
+    const ab = (id, l, t, bg, txt) => {
+      const el = document.createElement('div');
+      el.id = id;
+      el.textContent = txt;
+      el.style.cssText = `position:absolute;left:${l}px;top:${t}px;${btnStyle}background:${bg};`;
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); this._onTouchStart(id); });
+      el.addEventListener('pointerup', (e) => { e.preventDefault(); this._onTouchEnd(id); });
+      el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
+      abWrap.appendChild(el);
+    };
+    ab('touch-b', 44, 0, '#c0392b', 'B');
+    ab('touch-a', 0, 60, '#e74c3c', 'A');
+    container.appendChild(abWrap);
+    document.body.appendChild(container);
+  }
+
+  _onTouchStart(id) {
+    if (id === 'touch-left') this._touchLeft = true;
+    else if (id === 'touch-right') this._touchRight = true;
+    else if (id === 'touch-a') {
+      if (!this._touchJump) this._touchJustJump = true;
+      this._touchJump = true;
+    } else if (id === 'touch-b') {
+      this._touchJustShoot = true;
+    }
+  }
+
+  _onTouchEnd(id) {
+    if (id === 'touch-left') this._touchLeft = false;
+    else if (id === 'touch-right') this._touchRight = false;
+    else if (id === 'touch-a') this._touchJump = false;
+  }
+
   _playAnim(key) {
     if (this.anims.exists(key)) this.player.play(key, true);
   }
@@ -357,16 +462,18 @@ class MainScene extends Phaser.Scene {
   shootBullet() {
     const dir = this.player.flipX ? -1 : 1;
     const bx = this.player.x + dir * 30;
-    const by = this.player.y - 20;
-    const bullet = this.physics.add.image(bx, by, '__DEFAULT');
-    bullet.setScale(0.15);
-    bullet.setTint(0xffcc00);
+    const by = this.player.y - 57;
+    const texKey = this._bulletTexture || '__DEFAULT';
+    const bullet = this._bulletGroup.create(bx, by, texKey);
+    bullet.setScale(1);
     bullet.setDepth(5);
     bullet.body.setAllowGravity(false);
+    bullet.body.setSize(10, 10);
     bullet.setVelocityX(dir * 600);
     this._bullets = this._bullets || [];
     this._bullets.push(bullet);
     if (this.cache.audio.exists('sfx_shot')) this.sound.play('sfx_shot');
+    // Remove after 2 seconds
     // Remove after 2 seconds
     this.time.delayedCall(2000, () => {
       if (bullet.active) {
@@ -473,11 +580,32 @@ class MainScene extends Phaser.Scene {
     return byType;
   }
 
+  createBlueEnemyFrames() {
+    const annotations = this.cache.json.get('blue_alienbot_annot');
+    if (!annotations || !Array.isArray(annotations)) return null;
+    const srcImage = this.textures.get('blue_alienbot_img').getSourceImage();
+    const byType = { walk: [], exploding: [], dead: [] };
+    annotations.forEach((a, i) => {
+      const key = `blue_alien_${i}`;
+      const canvasTex = this.textures.createCanvas(key, a.width, a.height);
+      const ctx = canvasTex.getContext();
+      ctx.clearRect(0, 0, a.width, a.height);
+      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
+      canvasTex.refresh();
+      const nl = a.name.toLowerCase();
+      if (nl.startsWith('walk')) byType.walk.push(key);
+      else if (nl.startsWith('explod')) byType.exploding.push(key);
+      else if (nl.startsWith('dead')) byType.dead.push(key);
+    });
+    return byType;
+  }
+
   createHudHeartFrames() {
     const annotations = this.cache.json.get('hud_annot');
     if (!annotations || !Array.isArray(annotations)) return null;
     const srcImage = this.textures.get('hud_img').getSourceImage();
     const hearts = {};
+    let bulletKey = null;
     annotations.forEach((a, i) => {
       const key = `hud_${i}`;
       const canvasTex = this.textures.createCanvas(key, a.width, a.height);
@@ -488,8 +616,10 @@ class MainScene extends Phaser.Scene {
       if (a.name === 'heart full') hearts.full = key;
       else if (a.name === 'heart half') hearts.half = key;
       else if (a.name === 'heart empty') hearts.empty = key;
+      else if (a.name === 'bullet') bulletKey = key;
     });
-    return hearts.full && hearts.half && hearts.empty ? hearts : null;
+    if (!bulletKey) return null;
+    return { hearts: hearts.full && hearts.half && hearts.empty ? hearts : null, bullet: bulletKey };
   }
 
 }
@@ -655,9 +785,9 @@ function setupMapAndPlayer(map, tileset) {
     }
   }
 
-  // collisions — zero vertical velocity post-collision to kill micro-bounce
+  // collisions — zero vertical velocity only when actually on ground
   if (walkLayer) {
-    this.physics.add.collider(this.player, walkLayer, (_p) => { _p.body.velocity.y = 0; });
+    this.physics.add.collider(this.player, walkLayer, (_p) => { if (_p.body.blocked.down) _p.body.velocity.y = 0; });
   }
 
   // one-way platform collisions (jump through from below)
@@ -673,7 +803,7 @@ function setupMapAndPlayer(map, tileset) {
         });
       } catch (e) {}
     }
-    this.physics.add.collider(this.player, platformLayer, (_p) => { _p.body.velocity.y = 0; }, (player, tile) => {
+    this.physics.add.collider(this.player, platformLayer, (_p) => { if (_p.body.blocked.down) _p.body.velocity.y = 0; }, (player, tile) => {
       return player.body.velocity.y >= 0 && player.body.y + player.body.height <= tile.y + tile.height / 2;
     });
   }
@@ -873,18 +1003,36 @@ function setupMapAndPlayer(map, tileset) {
     }
   }
 
+  // --- blue enemy setup ---
+  const blueEnemyFrames = this.createBlueEnemyFrames();
+  if (blueEnemyFrames) {
+    if (blueEnemyFrames.walk.length) {
+      this.anims.create({ key: 'blue_alien_walk', frames: blueEnemyFrames.walk.map(k => ({ key: k })), frameRate: 6, repeat: -1 });
+    }
+    if (blueEnemyFrames.exploding.length) {
+      this.anims.create({ key: 'blue_alien_exploding', frames: blueEnemyFrames.exploding.map(k => ({ key: k })), frameRate: 8, repeat: 0 });
+    }
+    if (blueEnemyFrames.dead.length) {
+      this.anims.create({ key: 'blue_alien_dead', frames: blueEnemyFrames.dead.map(k => ({ key: k })), frameRate: 6, repeat: 0 });
+    }
+  }
+
   this.enemies = [];
   if (enemySpawnLayer && enemyFrames) {
-    const spawnLocalId = 1090;
     const ENEMY_SCALE = 0.4;
     enemySpawnLayer.forEachTile(tile => {
       if (!tile || tile.index < 0) return;
       let localId = tile.index;
       if (tileset && typeof tileset.firstgid === 'number') localId = tile.index - tileset.firstgid;
-      if (localId !== spawnLocalId) return;
+      if (localId !== 1090 && localId !== 1091) return;
+      const isBlue = localId === 1091;
+      const frames = isBlue ? blueEnemyFrames : enemyFrames;
+      const walkAnim = isBlue ? 'blue_alien_walk' : 'alien_walk';
+      const explodeAnim = isBlue ? 'blue_alien_exploding' : 'alien_exploding';
+      const deadAnim = isBlue ? 'blue_alien_dead' : 'alien_dead';
       const ex = tile.getCenterX ? tile.getCenterX() : (tile.pixelX + 16);
       const ey = tile.pixelY;
-      const enemy = this.physics.add.sprite(ex, ey, enemyFrames.walk.length ? enemyFrames.walk[0] : 'alien_0');
+      const enemy = this.physics.add.sprite(ex, ey, frames.walk.length ? frames.walk[0] : (isBlue ? 'blue_alien_0' : 'alien_0'));
       enemy.setOrigin(0.5, 1);
       enemy.setScale(ENEMY_SCALE);
       enemy.setDepth(4.5);
@@ -892,17 +1040,18 @@ function setupMapAndPlayer(map, tileset) {
       enemy.body.bounce.set(0);
       enemy.hp = 3;
       enemy._isDead = false;
-      if (walkLayer) this.physics.add.collider(enemy, walkLayer, (_e) => { _e.body.velocity.y = 0; });
-      if (platformLayer) this.physics.add.collider(enemy, platformLayer, (_e) => { _e.body.velocity.y = 0; });
-      if (this.anims.exists('alien_walk')) enemy.play('alien_walk');
+      enemy._isBlue = isBlue;
+      if (walkLayer) this.physics.add.collider(enemy, walkLayer);
+      if (platformLayer) this.physics.add.collider(enemy, platformLayer);
+      if (this.anims.exists(walkAnim)) enemy.play(walkAnim);
       enemy._dir = Math.random() < 0.5 ? 1 : -1;
       enemy._speed = 40;
       enemy.on('animationcomplete', (anim) => {
-        if (anim.key === 'alien_exploding') {
+        if (anim.key === explodeAnim) {
           if (enemy._isDead) {
-            if (this.anims.exists('alien_dead')) enemy.play('alien_dead');
-          } else if (this.anims.exists('alien_walk')) {
-            enemy.play('alien_walk');
+            if (this.anims.exists(deadAnim)) enemy.play(deadAnim);
+          } else if (this.anims.exists(walkAnim)) {
+            enemy.play(walkAnim);
           }
         }
       });
@@ -913,16 +1062,23 @@ function setupMapAndPlayer(map, tileset) {
   // --- HUD & health ---
   this.playerHealth = 6;
   this._invulnUntil = 0;
-  const heartFrames = this.createHudHeartFrames();
-  this._heartFrames = heartFrames;
+  const hudFrames = this.createHudHeartFrames();
+  this._heartFrames = hudFrames ? hudFrames.hearts : null;
+  this._bulletTexture = hudFrames ? hudFrames.bullet : null;
   this._heartSprites = [];
-  if (heartFrames) {
+  if (this._heartFrames) {
     for (let i = 0; i < 3; i++) {
-      const heart = this.add.image(20 + i * 22, 20, heartFrames.full);
+      const heart = this.add.image(20 + i * 22, 20, this._heartFrames.full);
       heart.setScrollFactor(0);
       heart.setDepth(100);
       this._heartSprites.push(heart);
     }
+  }
+
+  // bullet group + walk layer collision
+  this._bulletGroup = this.physics.add.group();
+  if (walkLayer) {
+    this.physics.add.collider(this._bulletGroup, walkLayer, (_bullet) => { if (_bullet.active) _bullet.destroy(); });
   }
 
   // player-enemy damage collision
@@ -933,6 +1089,7 @@ function setupMapAndPlayer(map, tileset) {
         if (this.time.now < this._invulnUntil) return;
         this.playerHealth--;
         this._invulnUntil = this.time.now + 1000;
+        if (this.cache.audio.exists('sfx_hit')) this.sound.play('sfx_hit');
         if (this.playerHealth <= 0) {
           this.playerHealth = 0;
           this.scene.restart();

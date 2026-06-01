@@ -19,6 +19,10 @@
       "type": "alienbot_spawning_point"
     },
     {
+      "id": 1091,
+      "type": "blue_alienbot_spawning_point"
+    },
+    {
       "id": 2563,
       "type": "diagonal_bottom_left_to_top_right"
     },

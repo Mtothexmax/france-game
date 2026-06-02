@@ -237,7 +237,7 @@ class MainScene extends Phaser.Scene {
         const bBot = body.y + body.height;
         const groundTileTop = Math.floor(bBot / 32) * 32;
         const diff = bBot - groundTileTop;
-        if (Math.abs(diff) < 10 && body.velocity.y >= 0) {
+        if (diff > 1 && diff < 10 && body.velocity.y >= 0) {
           body.y = groundTileTop - body.height;
           this.player.y = body.y + this.player.displayOriginY * Math.abs(this.player.scaleY) - body.offset.y * Math.abs(this.player.scaleY);
         }
@@ -993,7 +993,7 @@ function setupMapAndPlayer(map, tileset) {
   }
 
   // camera
-  this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
+  this.cameras.main.startFollow(this.player, true, 0.15, 0.15);
   this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
 
   // controls: arrows, WASD, space
@@ -1128,6 +1128,12 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 800,
     height: 600
+  },
+  render: {
+    pixelArt: true,
+    antialias: false,
+    roundPixels: true,
+    transparent: false
   },
   physics: {
     default: 'arcade',

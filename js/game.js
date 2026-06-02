@@ -193,6 +193,8 @@ class MainScene extends Phaser.Scene {
       this._touchRight = false;
       this._touchJump = false;
       this._touchJustJump = false;
+      this._jumpBuffer = 0;
+      this._jumpWasDown = false;
       const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 0 && window.innerWidth < 1024);
       if (isMobile) this._setupMobileControls();
     })();
@@ -211,11 +213,18 @@ class MainScene extends Phaser.Scene {
 
     const left = this.cursors.left.isDown || this.keys.A.isDown || this._touchLeft;
     const right = this.cursors.right.isDown || this.keys.D.isDown || this._touchRight;
-    const jumpPressed = ((this.cursors && this.cursors.up && Phaser.Input.Keyboard.JustDown(this.cursors.up))
+
+    // jump input with multi-frame buffer (mitigates keyboard ghosting)
+    const jumpJustDown = ((this.cursors && this.cursors.up && Phaser.Input.Keyboard.JustDown(this.cursors.up))
       || (this.keys && this.keys.W && Phaser.Input.Keyboard.JustDown(this.keys.W))
       || (this.keys && this.keys.SPACE && Phaser.Input.Keyboard.JustDown(this.keys.SPACE))
       || this._touchJustJump);
     this._touchJustJump = false;
+    const jumpDown = this.cursors.up.isDown || this.keys.W.isDown || this.keys.SPACE.isDown;
+    if (jumpJustDown || (jumpDown && !this._jumpWasDown)) this._jumpBuffer = 6;
+    this._jumpWasDown = jumpDown;
+    const jumpPressed = this._jumpBuffer > 0;
+    if (this._jumpBuffer > 0) this._jumpBuffer--;
 
     this.applySlopeAdjustment();
 
@@ -307,6 +316,7 @@ class MainScene extends Phaser.Scene {
     if ((jumpPressed && stableGrounded) || (jumpPressed && this._jumpsUsed < 2)) {
       this.player.setVelocityY(-this.jumpSpeed);
       this._jumpsUsed++;
+      this._jumpBuffer = 0;
       if (this.cache.audio.exists('sfx_jump')) this.sound.play('sfx_jump');
     }
 
@@ -401,10 +411,10 @@ class MainScene extends Phaser.Scene {
     const style = document.createElement('style');
     style.textContent = '@media(max-width:1024px){#game{height:calc(100vh - 160px)!important}}';
     document.head.appendChild(style);
-    const btnSizePx = Math.min(window.innerWidth * 0.12, 80);
-    const gapPx = Math.min(window.innerWidth * 0.02, 14);
-    const vGapPx = Math.min(window.innerWidth * 0.06, 36);
-    const fontSizePx = Math.min(window.innerWidth * 0.05, 32);
+    const btnSizePx = Math.min(window.innerWidth * 0.3, 160);
+    const gapPx = Math.min(window.innerWidth * 0.04, 22);
+    const vGapPx = Math.min(window.innerWidth * 0.12, 66);
+    const fontSizePx = Math.min(window.innerWidth * 0.12, 70);
     const btnStyle = `width:${btnSizePx}px;height:${btnSizePx}px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;font-size:${fontSizePx}px;font-weight:bold;border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:manipulation;pointer-events:auto;font-family:'Arial Black',Arial,sans-serif;`;
     const container = document.createElement('div');
     container.id = 'mobile-controls';

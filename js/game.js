@@ -1,3 +1,70 @@
+// Debug console overlay
+(function() {
+  if (typeof GAME_CONSTANTS === 'undefined' || !GAME_CONSTANTS.DEBUG_OVERLAY_ENABLED) return;
+  const _origLog = console.log;
+  const _origWarn = console.warn;
+  const _origError = console.error;
+  const _logs = [];
+  const MAX_LOGS = 200;
+  let _el = null, _content = null, _visible = true;
+  const update = () => {
+    if (!_content) return;
+    _content.textContent = _logs.join('\n');
+    _content.scrollTop = _content.scrollHeight;
+  };
+  console.log = function(...args) {
+    _logs.push(args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    _origLog.apply(console, args);
+    update();
+  };
+  console.warn = function(...args) {
+    _logs.push('[WARN] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    _origWarn.apply(console, args);
+    update();
+  };
+  console.error = function(...args) {
+    _logs.push('[ERROR] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    _origError.apply(console, args);
+    update();
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    const container = document.createElement('div');
+    container.id = 'debug-overlay';
+    container.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;font-family:monospace;font-size:11px;line-height:1.3;color:#0f0;background:rgba(0,0,0,0.85);border-bottom:1px solid #333;max-height:40vh;overflow:hidden;display:flex;flex-direction:column;';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#111;border-bottom:1px solid #333;';
+    const title = document.createElement('span');
+    title.textContent = 'Console';
+    title.style.cssText = 'font-weight:bold;color:#888;font-size:12px;';
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:6px;';
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Copy';
+    copyBtn.style.cssText = 'background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:11px;';
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(_logs.join('\n')).catch(() => {});
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = 'background:#c33;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:12px;font-weight:bold;';
+    closeBtn.addEventListener('click', () => { container.remove(); _visible = false; });
+    btnRow.appendChild(copyBtn);
+    btnRow.appendChild(closeBtn);
+    header.appendChild(title);
+    header.appendChild(btnRow);
+    container.appendChild(header);
+    _content = document.createElement('pre');
+    _content.style.cssText = 'margin:0;padding:6px 8px;overflow-y:auto;flex:1;white-space:pre-wrap;word-break:break-all;';
+    container.appendChild(_content);
+    document.body.appendChild(container);
+    _el = container;
+    update();
+  });
+})();
+
 class MainScene extends Phaser.Scene {
   constructor() { super('MainScene'); }
 
@@ -234,6 +301,7 @@ class MainScene extends Phaser.Scene {
       this.events.on('postupdate', () => {
         if (!this.player || !this.player.body || this._onSlope) return;
         const body = this.player.body;
+        if (body.blocked.down) return;
         const bBot = body.y + body.height;
         const groundTileTop = Math.floor(bBot / 32) * 32;
         const diff = bBot - groundTileTop;

@@ -1,0 +1,3 @@
+const GAME_CONSTANTS = {
+  DEBUG_OVERLAY_ENABLED: true
+};

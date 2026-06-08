@@ -6,7 +6,7 @@
   const _origError = console.error;
   const _logs = [];
   const MAX_LOGS = 200;
-  let _el = null, _content = null, _visible = true;
+  let _el = null, _statusEl = null, _content = null, _visible = true, _rafId = null;
   const update = () => {
     if (!_content) return;
     _content.textContent = _logs.join('\n');
@@ -30,6 +30,30 @@
     _origError.apply(console, args);
     update();
   };
+  const fmt = (n, d) => (n != null ? n.toFixed(d || 1) : '-');
+  const updateStatus = () => {
+    if (!_visible || !_el) return;
+    try {
+      const g = Phaser.GAMES && Phaser.GAMES[0];
+      const s = g && g.scene && g.scene.getScene('MainScene');
+      const p = s && s.player;
+      const b = p && p.body;
+      const lines = [];
+      if (g) lines.push('FPS:' + g.loop.actualFps.toFixed(1));
+      if (b) {
+        lines.push('X:' + fmt(p.x) + ' Y:' + fmt(p.y));
+        lines.push('VX:' + fmt(b.velocity ? b.velocity.x : 0) + ' VY:' + fmt(b.velocity ? b.velocity.y : 0));
+        lines.push('Floor:' + (b.blocked && b.blocked.down ? 1 : 0) + ' Slope:' + (s._onSlope ? 1 : 0) + ' Jmp:' + (s._jumpsUsed || 0));
+        lines.push('HP:' + (s.playerHealth != null ? s.playerHealth : '-') + '/' + 6);
+        if (p.anims) lines.push('Anim:' + (p.anims.currentAnim ? p.anims.currentAnim.key : '-') + ' Fr:' + (p.anims.currentFrame ? p.anims.currentFrame.index : '-'));
+      }
+      if (s) {
+        lines.push('L:' + (s._touchLeft ? 1 : 0) + ' R:' + (s._touchRight ? 1 : 0) + ' J:' + (s._touchJump ? 1 : 0) + ' Buf:' + (s._jumpBuffer || 0));
+      }
+      if (_statusEl) _statusEl.textContent = lines.join(' | ');
+    } catch(e) {}
+    _rafId = requestAnimationFrame(updateStatus);
+  };
   document.addEventListener('DOMContentLoaded', () => {
     const container = document.createElement('div');
     container.id = 'debug-overlay';
@@ -45,23 +69,29 @@
     copyBtn.textContent = 'Copy';
     copyBtn.style.cssText = 'background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:11px;';
     copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(_logs.join('\n')).catch(() => {});
+      const txt = '# Status\n' + (_statusEl ? _statusEl.textContent : '') + '\n# Log\n' + _logs.join('\n');
+      navigator.clipboard.writeText(txt).catch(() => {});
     });
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '✕';
     closeBtn.style.cssText = 'background:#c33;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:12px;font-weight:bold;';
-    closeBtn.addEventListener('click', () => { container.remove(); _visible = false; });
+    closeBtn.addEventListener('click', () => { container.remove(); _visible = false; if (_rafId) cancelAnimationFrame(_rafId); });
     btnRow.appendChild(copyBtn);
     btnRow.appendChild(closeBtn);
     header.appendChild(title);
     header.appendChild(btnRow);
     container.appendChild(header);
+    _statusEl = document.createElement('div');
+    _statusEl.style.cssText = 'padding:4px 8px;background:#000;border-bottom:1px solid #333;font-size:10px;color:#ff0;white-space:nowrap;overflow-x:auto;';
+    _statusEl.textContent = 'waiting for game...';
+    container.appendChild(_statusEl);
     _content = document.createElement('pre');
     _content.style.cssText = 'margin:0;padding:6px 8px;overflow-y:auto;flex:1;white-space:pre-wrap;word-break:break-all;';
     container.appendChild(_content);
     document.body.appendChild(container);
     _el = container;
     update();
+    _rafId = requestAnimationFrame(updateStatus);
   });
 })();
 
@@ -301,11 +331,10 @@ class MainScene extends Phaser.Scene {
       this.events.on('postupdate', () => {
         if (!this.player || !this.player.body || this._onSlope) return;
         const body = this.player.body;
-        if (body.blocked.down) return;
         const bBot = body.y + body.height;
         const groundTileTop = Math.floor(bBot / 32) * 32;
         const diff = bBot - groundTileTop;
-        if (diff > 1 && diff < 10 && body.velocity.y >= 0) {
+        if (diff > 3 && diff < 10 && body.velocity.y >= 0) {
           body.y = groundTileTop - body.height;
           this.player.y = body.y + this.player.displayOriginY * Math.abs(this.player.scaleY) - body.offset.y * Math.abs(this.player.scaleY);
         }
@@ -496,9 +525,9 @@ class MainScene extends Phaser.Scene {
       el.id = id;
       el.textContent = txt;
       el.style.cssText = `position:absolute;left:${l}px;top:${t}px;${btnStyle}`;
-      el.addEventListener('pointerdown', (e) => { e.preventDefault(); this._onTouchStart(id); });
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.setPointerCapture(e.pointerId); this._onTouchStart(id); });
       el.addEventListener('pointerup', (e) => { e.preventDefault(); this._onTouchEnd(id); });
-      el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
+      el.addEventListener('pointercancel', () => { this._onTouchEnd(id); });
       dpad.appendChild(el);
     };
     b('touch-left', 0, 0, '◀');
@@ -513,9 +542,9 @@ class MainScene extends Phaser.Scene {
       el.id = id;
       el.textContent = txt;
       el.style.cssText = `position:absolute;left:${l}px;top:${t}px;${btnStyle}background:${bg};`;
-      el.addEventListener('pointerdown', (e) => { e.preventDefault(); this._onTouchStart(id); });
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.setPointerCapture(e.pointerId); this._onTouchStart(id); });
       el.addEventListener('pointerup', (e) => { e.preventDefault(); this._onTouchEnd(id); });
-      el.addEventListener('pointerleave', () => { this._onTouchEnd(id); });
+      el.addEventListener('pointercancel', () => { this._onTouchEnd(id); });
       abWrap.appendChild(el);
     };
     ab('touch-b', 0, 0, '#c0392b', 'B');
@@ -1061,7 +1090,7 @@ function setupMapAndPlayer(map, tileset) {
   }
 
   // camera
-  this.cameras.main.startFollow(this.player, true, 0.15, 0.15);
+  this.cameras.main.startFollow(this.player, true, 0.3, 0.3);
   this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
 
   // controls: arrows, WASD, space

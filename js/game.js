@@ -43,7 +43,9 @@
       if (b) {
         lines.push('X:' + fmt(p.x) + ' Y:' + fmt(p.y));
         lines.push('VX:' + fmt(b.velocity ? b.velocity.x : 0) + ' VY:' + fmt(b.velocity ? b.velocity.y : 0));
-        lines.push('Floor:' + (b.blocked && b.blocked.down ? 1 : 0) + ' Slope:' + (s._onSlope ? 1 : 0) + ' Jmp:' + (s._jumpsUsed || 0));
+        const _bb = b.y + b.height;
+        const _tt = Math.floor(_bb / 32) * 32;
+        lines.push('Flr:' + (b.blocked && b.blocked.down ? 1 : 0) + ' Slp:' + (s._onSlope ? 1 : 0) + ' Df:' + (_bb - _tt).toFixed(2) + ' AG:' + (b.allowGravity ? 1 : 0));
         lines.push('HP:' + (s.playerHealth != null ? s.playerHealth : '-') + '/' + 6);
         if (p.anims) lines.push('Anim:' + (p.anims.currentAnim ? p.anims.currentAnim.key : '-') + ' Fr:' + (p.anims.currentFrame ? p.anims.currentFrame.index : '-'));
       }
@@ -94,6 +96,12 @@
     _rafId = requestAnimationFrame(updateStatus);
   });
 })();
+
+function debugLog(...args) {
+  if (typeof GAME_CONSTANTS !== 'undefined' && GAME_CONSTANTS.DEBUG_LOGS_ENABLED) {
+    console.log(...args);
+  }
+}
 
 class MainScene extends Phaser.Scene {
   constructor() { super('MainScene'); }
@@ -163,7 +171,7 @@ class MainScene extends Phaser.Scene {
       if (mapData && mapData.infinite) {
         try {
           mapToUse = convertInfiniteToFinite(mapData);
-          console.log('Converted infinite map to finite:', { width: mapToUse.width, height: mapToUse.height });
+          debugLog('Converted infinite map to finite:', { width: mapToUse.width, height: mapToUse.height });
         } catch (e) {
           console.error('Failed to convert infinite map:', e);
           mapToUse = mapData;
@@ -188,11 +196,11 @@ class MainScene extends Phaser.Scene {
       // Scan ALL layers for a tile whose GID maps to character_spawn_point local ID (1089)
       let spawnPos = null;
       const spawnTileLocalId = 1089;
-      console.log('Spawn scan: map size', mapWidth, 'x', mapHeight, 'tilesets:', (mapToUse.tilesets || []).map(t => ({ firstgid: t.firstgid, name: t.name })));
+      debugLog('Spawn scan: map size', mapWidth, 'x', mapHeight, 'tilesets:', (mapToUse.tilesets || []).map(t => ({ firstgid: t.firstgid, name: t.name })));
       if (mapToUse && mapToUse.layers) {
         for (const lyr of mapToUse.layers) {
-          if (!lyr.data) { console.log('Skipping layer', lyr.name, '(no data)'); continue; }
-          console.log('Scanning layer', lyr.name, 'dataLen:', lyr.data.length, 'sample:', lyr.data.slice(0, 16));
+          if (!lyr.data) { debugLog('Skipping layer', lyr.name, '(no data)'); continue; }
+          debugLog('Scanning layer', lyr.name, 'dataLen:', lyr.data.length, 'sample:', lyr.data.slice(0, 16));
           for (let i = 0; i < lyr.data.length; i++) {
             const gid = lyr.data[i];
             if (gid > 0) {
@@ -204,14 +212,14 @@ class MainScene extends Phaser.Scene {
                 const col = i % mapWidth;
                 const row = Math.floor(i / mapWidth);
                 spawnPos = { x: col * tw + tw / 2, y: row * th };
-                console.log('Found spawn point in layer', lyr.name, 'col', col, 'row', row, 'gid', gid, 'localId', localId, 'spawnPos', spawnPos);
+                debugLog('Found spawn point in layer', lyr.name, 'col', col, 'row', row, 'gid', gid, 'localId', localId, 'spawnPos', spawnPos);
                 break;
               }
             }
           }
           if (spawnPos) break;
         }
-        if (!spawnPos) console.log('No character_spawn_point tile (id=1089) found in any layer');
+        if (!spawnPos) debugLog('No character_spawn_point tile (id=1089) found in any layer');
       }
       // Also dump all unique local IDs from the Character spawn point layer if it exists
       const spawnLayerDump = (mapToUse.layers || []).find(l => l.name === 'Character spawn point' || l.name === 'character spawn point');
@@ -224,7 +232,7 @@ class MainScene extends Phaser.Scene {
             uniqueLocalIds.add(localId);
           }
         }
-        console.log('Unique local IDs in Character spawn point layer:', [...uniqueLocalIds]);
+        debugLog('Unique local IDs in Character spawn point layer:', [...uniqueLocalIds]);
       }
 
       const createLayerFromName = (name, x=0, y=0) => {
@@ -251,7 +259,7 @@ class MainScene extends Phaser.Scene {
           }
           arr2d[row] = rowArr;
         }
-        console.log('createLayerFromName', name, 'mapWidth', mapWidth, 'mapHeight', mapHeight);
+        debugLog('createLayerFromName', name, 'mapWidth', mapWidth, 'mapHeight', mapHeight);
         const tmpMap = this.make.tilemap({ data: arr2d, tileWidth: tw, tileHeight: th });
         const ts = tmpMap.addTilesetImage(tilesetName, 'tiles', tw, th, margin, spacing);
         const layer = tmpMap.createLayer(0, ts, x, y);
@@ -262,7 +270,7 @@ class MainScene extends Phaser.Scene {
             layerObj.parallaxy !== undefined ? layerObj.parallaxy : 1
           );
         }
-        console.log('created layer', name, 'layer size:', layer.layer.width, layer.layer.height);
+        debugLog('created layer', name, 'layer size:', layer.layer.width, layer.layer.height);
         created[name] = { tmpMap, layer };
         return layer;
       };
@@ -280,10 +288,7 @@ class MainScene extends Phaser.Scene {
 
       setupMapAndPlayer.call(this, fakeMap, null);
 
-      // play background music
-      if (this.cache.audio.exists('bgm')) {
-        this.sound.play('bgm', { loop: true, volume: 0.5 });
-      }
+      this.queueBackgroundMusic();
 
       // mobile on-screen controls
       this._touchLeft = false;
@@ -325,23 +330,41 @@ class MainScene extends Phaser.Scene {
 
     this.applySlopeAdjustment();
 
-    // Register once per scene: after physics, snap body to ground if close
-    if (!this._postRegistered) {
-      this._postRegistered = true;
-      this.events.on('postupdate', () => {
-        if (!this.player || !this.player.body || this._onSlope) return;
-        const body = this.player.body;
-        const bBot = body.y + body.height;
-        const groundTileTop = Math.floor(bBot / 32) * 32;
-        const diff = bBot - groundTileTop;
-        if (diff > 3 && diff < 10 && body.velocity.y >= 0) {
-          body.y = groundTileTop - body.height;
-          this.player.y = body.y + this.player.displayOriginY * Math.abs(this.player.scaleY) - body.offset.y * Math.abs(this.player.scaleY);
-        }
-      });
-    }
+    let onFloor;
+    if (this._onSlope) {
+      onFloor = true;
+    } else {
+      const body = this.player.body;
+      // Check if a collision tile exists just below the body
+      const checkY = body.y + body.height + 1;
+      const checkX = body.x + body.width / 2;
+      const tile = (this.walkLayer ? this.walkLayer.getTileAtWorldXY(checkX, checkY) : null)
+        || (this.platformLayer ? this.platformLayer.getTileAtWorldXY(checkX, checkY) : null);
+      const hasTile = tile && tile.collides;
 
-    const onFloor = this.player.body.blocked.down || this._onSlope;
+      if (hasTile) {
+        const tileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+        const bodyBot = body.y + body.height;
+        const dist = bodyBot - tileTop;
+        if (dist >= -1 && dist <= 2 && body.velocity.y >= 0) {
+          onFloor = true;
+          body.allowGravity = false;
+          body.velocity.y = 0;
+          if (Math.abs(dist) > 0.01) this.alignPlayerBodyBottom(tileTop);
+        } else {
+          onFloor = false;
+          body.allowGravity = true;
+        }
+      } else {
+        onFloor = body.blocked.down;
+        if (onFloor) {
+          body.allowGravity = false;
+          body.velocity.y = 0;
+        } else {
+          body.allowGravity = true;
+        }
+      }
+    }
     if (this._offGroundCount == null) this._offGroundCount = 999;
     if (onFloor) {
       this._offGroundCount = 0;
@@ -367,15 +390,7 @@ class MainScene extends Phaser.Scene {
     const shootPressed = (this.keys.CTRL && Phaser.Input.Keyboard.JustDown(this.keys.CTRL)) || (this.keys.F && Phaser.Input.Keyboard.JustDown(this.keys.F)) || this._touchJustShoot;
     this._touchJustShoot = false;
     if (shootPressed) {
-      this._playAnim('shoot');
-      this.shootBullet();
-      this._shootUntil = this.time.now + 600;
-      if (!this._shootEventRegistered) {
-        this._shootEventRegistered = true;
-        this.player.on('animationcomplete', (anim) => {
-          if (anim.key === 'shoot') this._shootUntil = 0;
-        });
-      }
+      this.startShot();
     }
 
     const isShooting = this._shootUntil > this.time.now;
@@ -411,6 +426,7 @@ class MainScene extends Phaser.Scene {
     }
 
     if ((jumpPressed && stableGrounded) || (jumpPressed && this._jumpsUsed < 2)) {
+      this.player.body.allowGravity = true;
       this.player.setVelocityY(-this.jumpSpeed);
       this._jumpsUsed++;
       this._jumpBuffer = 0;
@@ -508,14 +524,16 @@ class MainScene extends Phaser.Scene {
     const style = document.createElement('style');
     style.textContent = '@media(max-width:1024px){#game{height:calc(100vh - 160px)!important}}';
     document.head.appendChild(style);
-    const btnSizePx = Math.min(window.innerWidth * 0.3, 160);
-    const gapPx = Math.min(window.innerWidth * 0.04, 22);
-    const vGapPx = Math.min(window.innerWidth * 0.12, 66);
-    const fontSizePx = Math.min(window.innerWidth * 0.12, 70);
+    const sidePad = Math.min(35, window.innerWidth * 0.04);
+    const availW = window.innerWidth - sidePad * 2;
+    const btnSizePx = Math.min(Math.floor((availW - 10) / 3), window.innerWidth * 0.3, 160);
+    const gapPx = Math.min(window.innerWidth * 0.035, 16);
+    const vGapPx = Math.min(window.innerWidth * 0.1, 56);
+    const fontSizePx = Math.min(window.innerWidth * 0.09, Math.floor(btnSizePx * 0.45), 56);
     const btnStyle = `width:${btnSizePx}px;height:${btnSizePx}px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;font-size:${fontSizePx}px;font-weight:bold;border:2px solid rgba(255,255,255,0.4);display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:manipulation;pointer-events:auto;font-family:'Arial Black',Arial,sans-serif;`;
     const container = document.createElement('div');
     container.id = 'mobile-controls';
-    container.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:1000;display:flex;justify-content:space-between;align-items:flex-end;padding:10px 35px 20px;pointer-events:none;box-sizing:border-box;';
+    container.style.cssText = `position:fixed;bottom:0;left:0;right:0;z-index:1000;display:flex;justify-content:space-between;align-items:flex-end;padding:10px ${sidePad}px 20px;pointer-events:none;box-sizing:border-box;overflow:hidden;`;
     const dpad = document.createElement('div');
     const dpadW = btnSizePx * 2 + gapPx;
     const dpadH = btnSizePx;
@@ -574,6 +592,50 @@ class MainScene extends Phaser.Scene {
     if (this.anims.exists(key)) this.player.play(key, true);
   }
 
+  startShot() {
+    const alreadyAiming = this._shootUntil > this.time.now;
+    const animKey = alreadyAiming && this.anims.exists('shoot_fire') ? 'shoot_fire' : 'shoot_start';
+    const fireDelay = alreadyAiming ? 75 : 170;
+
+    if (this.anims.exists(animKey)) this.player.play(animKey, false);
+    this._shootUntil = this.time.now + 450;
+    this.time.delayedCall(fireDelay, () => {
+      if (!this.player || !this.player.active) return;
+      this.shootBullet();
+    });
+  }
+
+  alignPlayerBodyBottom(surfaceY) {
+    if (!this.player || !this.player.body) return;
+    const body = this.player.body;
+    const bodyBottom = body.y + body.height;
+    const diff = surfaceY - bodyBottom;
+    if (Math.abs(diff) <= 0.01) return;
+
+    this.player.y += diff;
+    if (typeof body.updateFromGameObject === 'function') body.updateFromGameObject();
+    body.velocity.y = 0;
+  }
+
+  queueBackgroundMusic() {
+    if (this._bgmQueued || !this.cache.audio.exists('bgm')) return;
+    this._bgmQueued = true;
+
+    const startMusic = () => {
+      if (this._bgmStarted || !this.sound) return;
+      this._bgmStarted = true;
+      if (this._bgm || !this.sound) return;
+      const volume = (typeof GAME_CONSTANTS !== 'undefined' && typeof GAME_CONSTANTS.MUSIC_VOLUME === 'number')
+        ? GAME_CONSTANTS.MUSIC_VOLUME
+        : 0.5;
+      this._bgm = this.sound.add('bgm', { loop: true, volume });
+      this._bgm.play();
+    };
+
+    this.input.once('pointerdown', startMusic);
+    window.addEventListener('touchstart', startMusic, { once: true, passive: true });
+  }
+
   shootBullet() {
     const dir = this.player.flipX ? -1 : 1;
     const bx = this.player.x + dir * 30;
@@ -603,40 +665,83 @@ class MainScene extends Phaser.Scene {
     this._onSlope = false;
     this._slopeType = null;
     const body = this.player.body;
-    const feetX = this.player.x;
-    const checkY = body.y + body.height - 1;
-    let tile = null;
-    if (this.walkLayer) tile = this.walkLayer.getTileAtWorldXY(feetX, checkY);
-    if ((!tile || !this.diagonalTileMap.has(tile.index)) && this.platformLayer) {
-      tile = this.platformLayer.getTileAtWorldXY(feetX, checkY);
-    }
-    if (tile && this.diagonalTileMap.has(tile.index) && body.velocity.y >= 0) {
+    const slope = this.findSlopeSurfaceForBody(body);
+
+    if (slope && body.velocity.y >= 0) {
       this._onSlope = true;
-      this._slopeType = this.diagonalTileMap.get(tile.index);
+      this._slopeType = slope.type;
+      this._slopeGrace = 3;
       body.allowGravity = false;
       body.velocity.y = 0;
-      const slopeType = this.diagonalTileMap.get(tile.index);
-      const localX = feetX - tile.getLeft();
-      const tileH = tile.height;
-      let surfaceY;
-      if (slopeType === 'diagonal_bottom_left_to_top_right') {
-        surfaceY = tile.getTop() + tileH - localX;
-      } else if (slopeType === 'diagonal_rop_left_to_bottom_right') {
-        surfaceY = tile.getTop() + localX;
-      } else {
-        this._slopeType = null;
-        return;
-      }
-      const bodyBottom = body.y + body.height;
-      const diff = surfaceY - bodyBottom;
-      if (Math.abs(diff) > 0.5) {
-        this.player.y += diff;
-      }
+      this.alignPlayerBodyBottom(slope.surfaceY);
+    } else if (this._slopeGrace > 0 && body.velocity.y >= 0) {
+      this._onSlope = true;
+      this._slopeGrace--;
+      body.allowGravity = false;
+      body.velocity.y = 0;
     } else if (this._onSlopePrev) {
+      this._slopeGrace = 0;
       body.allowGravity = true;
       this._slopeType = null;
     }
     this._onSlopePrev = this._onSlope;
+  }
+
+  findSlopeSurfaceForBody(body) {
+    const bodyBottom = body.y + body.height;
+    const inset = Math.min(8, Math.max(2, body.width * 0.2));
+    const sampleXs = [
+      body.x + inset,
+      body.x + body.width / 2,
+      body.x + body.width - inset
+    ];
+    const verticalOffsets = [-16, -8, 0, 8, 16, 24];
+    let best = null;
+
+    for (const x of sampleXs) {
+      for (const yOffset of verticalOffsets) {
+        const y = bodyBottom + yOffset;
+        const slope = this.getSlopeSurfaceAt(x, y);
+        if (!slope) continue;
+
+        const diff = slope.surfaceY - bodyBottom;
+        if (diff < -18 || diff > 20) continue;
+        if (!best || Math.abs(diff) < Math.abs(best.diff)) {
+          best = Object.assign({ diff }, slope);
+        }
+      }
+    }
+
+    return best;
+  }
+
+  getSlopeSurfaceAt(worldX, worldY) {
+    const layers = [this.walkLayer, this.platformLayer];
+    for (const layer of layers) {
+      if (!layer) continue;
+      const tile = layer.getTileAtWorldXY(worldX, worldY);
+      if (!tile || !this.diagonalTileMap.has(tile.index)) continue;
+
+      const type = this.diagonalTileMap.get(tile.index);
+      const tileLeft = tile.getLeft();
+      const tileTop = tile.getTop();
+      const tileW = tile.width || 32;
+      const tileH = tile.height || 32;
+      const localX = Phaser.Math.Clamp(worldX - tileLeft, 0, tileW);
+      let surfaceY;
+
+      if (type === 'diagonal_bottom_left_to_top_right') {
+        surfaceY = tileTop + tileH - (localX / tileW) * tileH;
+      } else if (type === 'diagonal_rop_left_to_bottom_right') {
+        surfaceY = tileTop + (localX / tileW) * tileH;
+      } else {
+        continue;
+      }
+
+      return { surfaceY, type, tile };
+    }
+
+    return null;
   }
 
   createFramesFromAnnotations(prefix, imageKey, annotations) {
@@ -659,12 +764,19 @@ class MainScene extends Phaser.Scene {
     if (!annotations || !Array.isArray(annotations)) return null;
     const srcImage = this.textures.get('character_img').getSourceImage();
     const byType = { walk: [], idle: [], jump: [], shoot: [] };
+    const frameW = Math.max(...annotations.map(a => a.width || 0));
+    const frameH = Math.max(...annotations.map(a => a.height || 0));
+    const idleBase = annotations.find(a => String(a.name).toLowerCase().startsWith('idle')) || annotations[0];
+    this._characterBaseFrameSize = { width: idleBase.width, height: idleBase.height };
+
     annotations.forEach((a, i) => {
       const key = `char_${i}`;
-      const canvasTex = this.textures.createCanvas(key, a.width, a.height);
+      const canvasTex = this.textures.createCanvas(key, frameW, frameH);
       const ctx = canvasTex.getContext();
-      ctx.clearRect(0, 0, a.width, a.height);
-      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, 0, 0, a.width, a.height);
+      ctx.clearRect(0, 0, frameW, frameH);
+      const drawX = Math.floor((frameW - a.width) / 2);
+      const drawY = frameH - a.height;
+      ctx.drawImage(srcImage, a.x, a.y, a.width, a.height, drawX, drawY, a.width, a.height);
       canvasTex.refresh();
       const nl = a.name.toLowerCase();
       if (nl.startsWith('walk')) byType.walk.push(key);
@@ -873,8 +985,10 @@ function setupMapAndPlayer(map, tileset) {
   this.player.setScale(PLAYER_SCALE);
   this.player.setDepth(4.5);
   this.player.setCollideWorldBounds(true);
-  const bodyW = Math.floor(this.player.width * 0.6);
-  const bodyH = Math.floor(this.player.height * 0.85);
+  const bodySourceW = (this._characterBaseFrameSize && this._characterBaseFrameSize.width) || this.player.width;
+  const bodySourceH = (this._characterBaseFrameSize && this._characterBaseFrameSize.height) || this.player.height;
+  const bodyW = Math.floor(bodySourceW * 0.6);
+  const bodyH = Math.floor(bodySourceH * 0.85);
   this.player.body.setSize(bodyW, bodyH);
   const offsetX = Math.floor((this.player.width - bodyW) / 2);
   const offsetY = Math.floor(this.player.height - bodyH);
@@ -896,7 +1010,8 @@ function setupMapAndPlayer(map, tileset) {
     }
     if (charFrames.shoot.length) {
       const [idle, aim, shooting] = charFrames.shoot;
-      this.anims.create({ key: 'shoot', frames: [idle, aim, shooting, aim, idle].map(k => ({ key: k })), frameRate: 8, repeat: 0 });
+      this.anims.create({ key: 'shoot_start', frames: [idle, aim, shooting, aim].map(k => ({ key: k })), frameRate: 12, repeat: 0 });
+      this.anims.create({ key: 'shoot_fire', frames: [aim, shooting, aim].map(k => ({ key: k })), frameRate: 14, repeat: 0 });
     }
   }
 
@@ -919,7 +1034,8 @@ function setupMapAndPlayer(map, tileset) {
       } catch (e) {}
     }
     this.physics.add.collider(this.player, platformLayer, (_p) => { if (_p.body.blocked.down) _p.body.velocity.y = 0; }, (player, tile) => {
-      return player.body.velocity.y >= 0 && player.body.y + player.body.height <= tile.y + tile.height / 2;
+      const tileTop = (typeof tile.getTop === 'function') ? tile.getTop() : tile.pixelY;
+      return player.body.velocity.y >= 0 && player.body.y + player.body.height <= tileTop + tile.height / 2;
     });
   }
 
@@ -1059,7 +1175,7 @@ function setupMapAndPlayer(map, tileset) {
       }
 
       if (spawnX !== null && spawnTileTop !== null) {
-        console.log('spawn chosen method:', spawnMethod, 'spawnX:', spawnX, 'tileTop:', spawnTileTop);
+        debugLog('spawn chosen method:', spawnMethod, 'spawnX:', spawnX, 'tileTop:', spawnTileTop);
         const tileTop = spawnTileTop;
         // compute y so the sprite bottom is placed near tileTop, then correct using live body
         const displayH = this.player.displayHeight || (this.player.height * this.player.scaleY);
@@ -1074,24 +1190,25 @@ function setupMapAndPlayer(map, tileset) {
           const bodyY = this.player.body.y;
           const bodyHLive = this.player.body.height;
           const bodyBottomLive = bodyY + bodyHLive;
-          console.log('delayed align check:', { tileTop, desiredY, bodyY, bodyHLive, bodyBottomLive });
+          debugLog('delayed align check:', { tileTop, desiredY, bodyY, bodyHLive, bodyBottomLive });
           const diffLive = bodyBottomLive - tileTop;
           if (Math.abs(diffLive) > 0.5) {
             const newY = this.player.y - diffLive;
-            console.log('adjusting player by', -diffLive, 'to newY', newY);
+            debugLog('adjusting player by', -diffLive, 'to newY', newY);
             this.player.setPosition(spawnX, newY);
             if (typeof this.player.body.updateFromGameObject === 'function') this.player.body.updateFromGameObject();
             if (this.player.body) this.player.body.velocity.y = 0;
             const bodyBottomAfter = (this.player.body.y || 0) + (this.player.body.height || 0);
-            console.log('after delayed adjust bodyBottomAfter vs tileTop', { bodyBottomAfter, tileTop, diffAfter: bodyBottomAfter - tileTop });
+            debugLog('after delayed adjust bodyBottomAfter vs tileTop', { bodyBottomAfter, tileTop, diffAfter: bodyBottomAfter - tileTop });
           }
         });
       }
   }
 
   // camera
-  this.cameras.main.startFollow(this.player, true, 0.3, 0.3);
+  this.cameras.main.startFollow(this.player, true, 1, 1);
   this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
+  this.cameras.main.roundPixels = true;
 
   // controls: arrows, WASD, space
   this.cursors = this.input.keyboard.createCursorKeys();
@@ -1238,6 +1355,9 @@ const config = {
       gravity: { y: 1400 },
       debug: false
     }
+  },
+  audio: {
+    disableWebAudio: true
   },
   scene: [MainScene]
 };
